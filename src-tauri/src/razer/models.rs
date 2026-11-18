@@ -40,6 +40,7 @@ pub const DONGLE_LED: u32 = 1 << 13;
 pub const DYNSENS: u32 = 1 << 14;
 pub const REMAP: u32 = 1 << 15;
 pub const HEADSET_EQ: u32 = 1 << 16;
+pub const KEYMAP: u32 = 1 << 17;
 
 // LED ids
 pub const LED_ALL: u8 = 0x00;
@@ -138,7 +139,7 @@ pub static MODELS: &[Model] = &[
     m!(0x0287, "BlackWidow V4", Keyboard, 0x1F, 0, KB, BACKLIGHT),
     m!(0x028D, "BlackWidow V4 Pro", Keyboard, 0x1F, 0, KB, BACKLIGHT),
     m!(0x0293, "BlackWidow V4 X", Keyboard, 0x1F, 0, KB, BACKLIGHT),
-    m!(0x02E3, "Reclusa X Mini 65%", Keyboard, 0x1F, 0, KB, BACKLIGHT),
+    m!(0x02E3, "Reclusa X Mini 65%", Keyboard, 0x1F, 0, KB | KEYMAP, BACKLIGHT),
     // ---------------------------------------------------------- keypads
     m!(0x0207, "Orbweaver Chroma", Keypad, 0xFF, 0, M_STD_LIGHT, BACKLIGHT),
     m!(0x022B, "Tartarus V2", Keypad, 0xFF, 0, KB, BACKLIGHT),
@@ -174,4 +175,111 @@ pub fn lookup(pid: u16, product: Option<&str>) -> Model {
         _ => (Kind::Other, UNVERIFIED, NONE, 0),
     };
     Model { pid, name: Cow::Owned(name), kind, tx: 0x1F, max_dpi: dpi, flags, zones }
+}
+
+// ---------------------------------------------------------------- keyboards
+//
+// Razer key ids are the "typical AT-101 position" values from the USB HID
+// Usage Tables, not USB HID usages. `usage` is the HID usage the key sends by
+// default; modifier keys have a zero usage and a bit in `modifier` instead.
+//
+// The 65% list below follows the documented AT-101 ids and the Reclusa's
+// 68-key layout. The UI uses a matching copy in src/webhid/models.js; keep the
+// two lists in sync when a key is added or removed.
+
+// The frontend uses its own copy of this table for labels; only `id` is needed
+// by the Rust side, which validates writes against it.
+#[allow(dead_code)]
+pub struct KeyDef {
+    pub id: u8,
+    pub label: &'static str,
+    pub usage: u8,
+    pub modifier: u8,
+}
+
+macro_rules! k {
+    ($id:expr, $label:expr, $usage:expr) => {
+        KeyDef { id: $id, label: $label, usage: $usage, modifier: 0 }
+    };
+}
+
+macro_rules! km {
+    ($id:expr, $label:expr, $modifier:expr) => {
+        KeyDef { id: $id, label: $label, usage: 0, modifier: $modifier }
+    };
+}
+
+pub static KEYMAP_KEYS: &[KeyDef] = &[
+    k!(110, "Esc", 0x29),
+    k!(2, "1", 0x1E),
+    k!(3, "2", 0x1F),
+    k!(4, "3", 0x20),
+    k!(5, "4", 0x21),
+    k!(6, "5", 0x22),
+    k!(7, "6", 0x23),
+    k!(8, "7", 0x24),
+    k!(9, "8", 0x25),
+    k!(10, "9", 0x26),
+    k!(11, "0", 0x27),
+    k!(12, "-", 0x2D),
+    k!(13, "=", 0x2E),
+    k!(15, "Backspace", 0x2A),
+    k!(16, "Tab", 0x2B),
+    k!(17, "Q", 0x14),
+    k!(18, "W", 0x1A),
+    k!(19, "E", 0x08),
+    k!(20, "R", 0x15),
+    k!(21, "T", 0x17),
+    k!(22, "Y", 0x1C),
+    k!(23, "U", 0x18),
+    k!(24, "I", 0x0C),
+    k!(25, "O", 0x12),
+    k!(26, "P", 0x13),
+    k!(27, "[", 0x2F),
+    k!(28, "]", 0x30),
+    k!(29, "\\", 0x31),
+    k!(30, "Caps Lock", 0x39),
+    k!(31, "A", 0x04),
+    k!(32, "S", 0x16),
+    k!(33, "D", 0x07),
+    k!(34, "F", 0x09),
+    k!(35, "G", 0x0A),
+    k!(36, "H", 0x0B),
+    k!(37, "J", 0x0D),
+    k!(38, "K", 0x0E),
+    k!(39, "L", 0x0F),
+    k!(40, ";", 0x33),
+    k!(41, "'", 0x34),
+    k!(43, "Enter", 0x28),
+    km!(44, "Left Shift", 0x02),
+    k!(46, "Z", 0x1D),
+    k!(47, "X", 0x1B),
+    k!(48, "C", 0x06),
+    k!(49, "V", 0x19),
+    k!(50, "B", 0x05),
+    k!(51, "N", 0x11),
+    k!(52, "M", 0x10),
+    k!(53, ",", 0x36),
+    k!(54, ".", 0x37),
+    k!(55, "/", 0x38),
+    km!(57, "Right Shift", 0x20),
+    km!(58, "Left Ctrl", 0x01),
+    km!(127, "Left Win", 0x08),
+    km!(60, "Left Alt", 0x04),
+    k!(61, "Space", 0x2C),
+    km!(62, "Right Alt", 0x40),
+    km!(64, "Right Ctrl", 0x10),
+    k!(79, "Left", 0x50),
+    k!(83, "Up", 0x52),
+    k!(84, "Down", 0x51),
+    k!(89, "Right", 0x4F),
+    k!(76, "Delete", 0x4C),
+    k!(80, "Home", 0x4A),
+    k!(81, "End", 0x4D),
+    k!(85, "Page Up", 0x4B),
+    k!(86, "Page Down", 0x4E),
+];
+
+pub fn key_def(id: u8) -> Option<&'static KeyDef> {
+    KEYMAP_KEYS.iter().find(|key| key.id == id)
 }

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import * as P from '../src/webhid/protocol.js';
-import { lookup, capsOf, MODELS } from '../src/webhid/models.js';
+import { lookup, capsOf, MODELS, KEYMAP_KEYS, keyDef } from '../src/webhid/models.js';
 
 // CRC and layout of a DPI write
 const dpi = P.setDpi(0x1f, 800, 800);
@@ -24,6 +24,11 @@ assert.deepEqual([...P.setSensitivityCurve(0x1f, 0).slice(5, 10)], [0x02, 0x0b, 
 assert.deepEqual([...P.setButtonMouse(0x1f, 5, 0, 1).slice(5, 14)], [0x0a, 0x02, 0x0c, 0x01, 0x05, 0x00, 0x01, 0x01, 0x01]);
 assert.deepEqual([...P.setButtonMouse(0x1f, 5, 1, 5).slice(8, 14)], [0x01, 0x05, 0x01, 0x01, 0x01, 0x05]);
 assert.deepEqual([...P.setButtonKey(0x1f, 5, 0, 0, 0x04).slice(5, 18)], [0x0a, 0x02, 0x0c, 0x01, 0x05, 0x00, 0x02, 0x02, 0x00, 0x04, 0, 0, 0]);
+
+// Keyboard key map: [profile, key, layer, fn, len, data…]
+assert.deepEqual([...P.setKey(0x1f, 58, 2, [1, 0]).slice(5, 15)], [0x50, 0x02, 0x0d, 0x01, 0x3a, 0x00, 0x02, 0x02, 0x01, 0x00]);
+assert.deepEqual([...P.setKey(0x1f, 31, 0, []).slice(5, 13)], [0x50, 0x02, 0x0d, 0x01, 0x1f, 0x00, 0x00, 0x00]);
+assert.deepEqual([...P.getKey(0x1f, 58, 1).slice(5, 11)], [0x50, 0x02, 0x8d, 0x01, 0x3a, 0x01]);
 
 // Default custom curve packets
 const curve = P.curvePoints(0x1f, P.rampCurve(1.4975));
@@ -50,6 +55,8 @@ const unknown = lookup(0x1abc, 'Razer Mystery');
 assert.equal(unknown.kind, 'other');
 assert.equal(unknown.name, 'Mystery');
 assert.equal(MODELS.filter((m) => m.pid === 0x02e3)[0].name, 'Reclusa X Mini 65%');
+assert.equal(capsOf(lookup(0x02e3)).keymap, true);
+assert.equal(KEYMAP_KEYS.length, 68);
 
 console.log('webhid tests passed');
 
@@ -66,6 +73,7 @@ class FakeDevice {
     this.collections = [{ usagePage: 0xff00 }];
     this.opened = false;
     this.pending = new Uint8Array(90);
+    this.keymaps = new Map();
   }
   async open() { this.opened = true; }
   async close() { this.opened = false; }
@@ -82,7 +90,11 @@ class FakeDevice {
     const res = new Uint8Array(90);
     res.set(req);
     res[0] = P.STATUS_OK;
-    respond(this.productId, req, res);
+    if (req[6] === 0x02 && req[7] === 0x0d) {
+      const len = req[12];
+      this.keymaps.set(req[9], { fn: req[11], data: [...req.slice(13, 13 + len)] });
+    }
+    respond(this, req, res);
     this.pending = res;
   }
   async receiveFeatureReport(id) {
@@ -94,7 +106,7 @@ class FakeDevice {
   }
 }
 
-function respond(pid, req, res) {
+function respond(device, req, res) {
   const cls = req[6];
   const cmd = req[7];
   const a = (i, v) => { res[8 + i] = v; };
@@ -118,14 +130,27 @@ function respond(pid, req, res) {
     case "11:144": a(1, 1); break; // dynamic sensitivity on
     case "11:145": a(1, 0); break; // classic curve
     case "2:140": a(1, req[9]); a(3, 1); a(5, req[9]); break; // buttons echo
+    case "2:141": { // key map echo: [profile, key, layer, fn, len, data…]
+      const key = req[9];
+      const stored = device.keymaps.get(key);
+      const def = keyDef(key);
+      const fallback = def && (def.modifier ? { fn: 2, data: [def.modifier, 0] } : { fn: 2, data: [0, def.usage] });
+      const map = stored || fallback;
+      if (map) {
+        a(0, req[8]); a(1, key); a(2, req[10]); a(3, map.fn); a(4, map.data.length);
+        map.data.forEach((v, i) => a(5 + i, v));
+      }
+      break;
+    }
     default: break;
   }
 }
 
 const mouse = new FakeDevice(0x00c1, "Razer Viper V3 Pro");
 const keyboard = new FakeDevice(0x0287, "Razer BlackWidow V4");
+const reclusa = new FakeDevice(0x02e3, "Razer Reclusa X Mini 65%");
 const headset = new FakeDevice(0x0555, "Razer BlackShark V2 Pro");
-granted.push(mouse, keyboard, headset);
+granted.push(mouse, keyboard, reclusa, headset);
 Object.defineProperty(globalThis, "navigator", {
   configurable: true,
   value: {
@@ -142,7 +167,8 @@ const backend = await import("../src/webhid/backend.js");
 assert.equal(backend.supported, true);
 
 const listed = await backend.invoke("list_devices");
-assert.deepEqual(listed.map((d) => d.pid).sort((a, b) => a - b), [0x00c1, 0x0287, 0x0555]);
+assert.deepEqual(listed.map((d) => d.pid).sort((a, b) => a - b), [0x00c1, 0x0287, 0x02e3, 0x0555]);
+assert.equal(listed.find((d) => d.pid === 0x02e3).caps.keymap, true);
 const viper = listed.find((d) => d.pid === 0x00c1);
 assert.equal(viper.name, "Viper V3 Pro");
 assert.equal(viper.online, true);
@@ -203,6 +229,21 @@ await backend.invoke("set_button", {
 });
 assert.deepEqual([...last().slice(8, 15)], [0x01, 0x05, 0x00, 0x02, 0x02, 0x02, 0x04]);
 
+const ks = await backend.invoke("device_state", { key: "1532:02e3" });
+assert.equal(ks.keys.length, KEYMAP_KEYS.length);
+assert.deepEqual(ks.keys.find((k) => k.key === 31), { key: 31, kind: "key", modifiers: 0, usage: 0x04 });
+assert.deepEqual(ks.keys.find((k) => k.key === 44), { key: 44, kind: "key", modifiers: 2, usage: 0 });
+
+const beforeKey = mouseCalls.length;
+await backend.invoke("set_key", { key: "1532:02e3", id: 58, map: { kind: "key", modifiers: 1, usage: 0 } });
+assert.deepEqual([...mouseCalls[beforeKey].slice(5, 15)], [0x50, 0x02, 0x0d, 0x01, 0x3a, 0x00, 0x02, 0x02, 0x01, 0x00]);
+assert.deepEqual(reclusa.keymaps.get(58), { fn: 2, data: [1, 0] });
+assert.deepEqual([...last().slice(5, 8)], [0x50, 0x02, 0x8d]);
+
+await backend.invoke("set_key", { key: "1532:02e3", id: 31, map: { kind: "off" } });
+assert.deepEqual([...mouseCalls.at(-2).slice(11, 13)], [0x00, 0x00]);
+await assert.rejects(() => backend.invoke("set_key", { key: "1532:02e3", id: 200, map: { kind: "off" } }), /unknown key/);
+
 const beforeCurve = mouseCalls.length;
 await backend.invoke("set_dynamic_sensitivity", { key: "1532:00c1", on: true, curve: 3, customMax: 1.5 });
 const curveCalls = mouseCalls.slice(beforeCurve).filter((r) => r[6] === 0x0b && r[7] === 0x13);
@@ -211,7 +252,7 @@ assert.deepEqual([...curveCalls[0].slice(5, 13)], [0x25, 0x0b, 0x13, 0x01, 0x03,
 
 const diagnostic = await backend.diag();
 assert.equal(diagnostic.supported, true);
-assert.equal(diagnostic.devices.length, 3);
+assert.equal(diagnostic.devices.length, 4);
 const diagMouse = diagnostic.devices.find((d) => d.productId === "0xc1");
 assert.equal(diagMouse.reportIds[0], 0);
 assert.ok(diagMouse.probe.some((p) => p.status === 2));
@@ -226,7 +267,7 @@ assert.equal(headsetOutputs[0][1][12], 0x09);
 await backend.invoke("disconnect_device", { key: "1532:0287" });
 assert.equal(keyboard.opened, false);
 assert.equal((await backend.invoke("list_devices")).some((d) => d.pid === 0x0287), false);
-assert.equal(granted.length, 2);
+assert.equal(granted.length, 3);
 
 await backend.invoke("disconnect_all_devices");
 assert.equal((await backend.invoke("list_devices")).length, 0);

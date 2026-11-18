@@ -19,6 +19,7 @@ export const DONGLE_LED = 1 << 13;
 export const DYNSENS = 1 << 14;
 export const REMAP = 1 << 15;
 export const HEADSET_EQ = 1 << 16;
+export const KEYMAP = 1 << 17;
 
 export const LED_ALL = 0x00;
 export const LED_SCROLL = 0x01;
@@ -101,7 +102,7 @@ export const MODELS = [
   m(0x0287, "BlackWidow V4", "keyboard", 0x1f, 0, KB, BACKLIGHT),
   m(0x028d, "BlackWidow V4 Pro", "keyboard", 0x1f, 0, KB, BACKLIGHT),
   m(0x0293, "BlackWidow V4 X", "keyboard", 0x1f, 0, KB, BACKLIGHT),
-  m(0x02e3, "Reclusa X Mini 65%", "keyboard", 0x1f, 0, KB, BACKLIGHT),
+  m(0x02e3, "Reclusa X Mini 65%", "keyboard", 0x1f, 0, KB | KEYMAP, BACKLIGHT),
   // keypads
   m(0x0207, "Orbweaver Chroma", "keypad", 0xff, 0, M_STD_LIGHT, BACKLIGHT),
   m(0x022b, "Tartarus V2", "keypad", 0xff, 0, KB, BACKLIGHT),
@@ -150,6 +151,83 @@ export function lookup(pid, product) {
   return { pid, name: guessed, kind, tx: 0x1f, max_dpi: dpi, flags, zones };
 }
 
+// Razer key ids are AT-101 positions, not USB HID usages. Modifier keys have a
+// zero usage and a bit in `modifier` instead. Mirrors KEYMAP_KEYS in models.rs.
+const k = (id, label, usage, modifier = 0) => ({ id, label, usage, modifier });
+
+export const KEYMAP_KEYS = [
+  k(110, "Esc", 0x29),
+  k(2, "1", 0x1e),
+  k(3, "2", 0x1f),
+  k(4, "3", 0x20),
+  k(5, "4", 0x21),
+  k(6, "5", 0x22),
+  k(7, "6", 0x23),
+  k(8, "7", 0x24),
+  k(9, "8", 0x25),
+  k(10, "9", 0x26),
+  k(11, "0", 0x27),
+  k(12, "-", 0x2d),
+  k(13, "=", 0x2e),
+  k(15, "Backspace", 0x2a),
+  k(16, "Tab", 0x2b),
+  k(17, "Q", 0x14),
+  k(18, "W", 0x1a),
+  k(19, "E", 0x08),
+  k(20, "R", 0x15),
+  k(21, "T", 0x17),
+  k(22, "Y", 0x1c),
+  k(23, "U", 0x18),
+  k(24, "I", 0x0c),
+  k(25, "O", 0x12),
+  k(26, "P", 0x13),
+  k(27, "[", 0x2f),
+  k(28, "]", 0x30),
+  k(29, "\\", 0x31),
+  k(30, "Caps Lock", 0x39),
+  k(31, "A", 0x04),
+  k(32, "S", 0x16),
+  k(33, "D", 0x07),
+  k(34, "F", 0x09),
+  k(35, "G", 0x0a),
+  k(36, "H", 0x0b),
+  k(37, "J", 0x0d),
+  k(38, "K", 0x0e),
+  k(39, "L", 0x0f),
+  k(40, ";", 0x33),
+  k(41, "'", 0x34),
+  k(43, "Enter", 0x28),
+  k(44, "Left Shift", 0, 0x02),
+  k(46, "Z", 0x1d),
+  k(47, "X", 0x1b),
+  k(48, "C", 0x06),
+  k(49, "V", 0x19),
+  k(50, "B", 0x05),
+  k(51, "N", 0x11),
+  k(52, "M", 0x10),
+  k(53, ",", 0x36),
+  k(54, ".", 0x37),
+  k(55, "/", 0x38),
+  k(57, "Right Shift", 0, 0x20),
+  k(58, "Left Ctrl", 0, 0x01),
+  k(127, "Left Win", 0, 0x08),
+  k(60, "Left Alt", 0, 0x04),
+  k(61, "Space", 0x2c),
+  k(62, "Right Alt", 0, 0x40),
+  k(64, "Right Ctrl", 0, 0x10),
+  k(79, "Left", 0x50),
+  k(83, "Up", 0x52),
+  k(84, "Down", 0x51),
+  k(89, "Right", 0x4f),
+  k(76, "Delete", 0x4c),
+  k(80, "Home", 0x4a),
+  k(81, "End", 0x4d),
+  k(85, "Page Up", 0x4b),
+  k(86, "Page Down", 0x4e),
+];
+
+export const keyDef = (id) => KEYMAP_KEYS.find((key) => key.id === id);
+
 export function capsOf(model) {
   const has = (flag) => (model.flags & flag) !== 0;
   let polling = [];
@@ -182,6 +260,7 @@ export function capsOf(model) {
     dongle_led: has(DONGLE_LED),
     dynamic_sensitivity: has(DYNSENS),
     remap: has(REMAP),
+    keymap: has(KEYMAP),
     eq: has(HEADSET_EQ),
     lighting: has(LIGHT),
     brightness: has(BRIGHT),

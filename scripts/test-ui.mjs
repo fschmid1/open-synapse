@@ -39,7 +39,7 @@ try {
       await page.locator(`[data-act="theme"][data-v="${theme}"]`).click();
       await fit(`${width}/${theme}/settings`);
       await page.locator('[data-view="library"]').click(); await fit('library');
-      for (const key of ['demo:viper','demo:basilisk','demo:bw','demo:firefly']) {
+      for (const key of ['demo:viper','demo:basilisk','demo:bw','demo:reclusa','demo:firefly']) {
         await page.locator(`.dev-item[data-key="${key}"]`).click(); await fit(key);
         for (const tab of await page.locator('[data-tab]').evaluateAll(es => es.map(e => e.dataset.tab))) {
           await page.locator(`[data-tab="${tab}"]`).click(); await fit(`${key}/${tab}`);
@@ -73,6 +73,19 @@ try {
   await page.locator('.dev-item').first().click();
   assert.equal(await page.locator('[data-act="listen"].primary').count(), 0, 'navigation cancels key capture');
   assert.equal(await page.locator('[data-act="button"][data-b="3"]').inputValue(), '3', 'typing after navigation must not remap');
+  await page.locator('.dev-item[data-key="demo:reclusa"]').click();
+  await page.locator('[data-tab="keys"]').click();
+  await page.locator('[data-act="key"][data-k="30"]').selectOption('key');
+  assert.equal(await page.locator('[data-act="key-listen"].primary').count(), 1, 'key capture starts');
+  await page.keyboard.press('a');
+  assert.equal(await page.locator('[data-act="key"][data-k="30"]').inputValue(), 'key', 'Caps Lock is remapped');
+  assert.match(await page.locator('[data-act="key"][data-k="30"] option:checked').textContent(), /A/);
+  await page.locator('[data-act="key"][data-k="31"]').selectOption('key');
+  assert.equal(await page.locator('[data-act="key-listen"].primary').count(), 1, 'second key capture starts');
+  await page.locator('[data-view="settings"]').click(); await page.keyboard.press('b');
+  await page.locator('.dev-item[data-key="demo:reclusa"]').click();
+  assert.equal(await page.locator('[data-act="key-listen"].primary').count(), 0, 'navigation cancels key capture');
+  assert.equal(await page.locator('[data-act="key"][data-k="31"]').inputValue(), '', 'typing after navigation must not remap a key');
   await page.locator('[data-view="library"]').click(); await fit('long name in library');
   const originalCount = await page.locator('.preset').count();
   await page.locator('[data-act="paste"]').click();
@@ -85,8 +98,11 @@ try {
   assert.equal(await page.locator('.preset').count(), originalCount + 1, 'share-code import works');
   await page.waitForTimeout(400); await page.reload(); await page.locator('.hero').waitFor();
   assert.equal(await page.locator('#dpi-num').textContent(), '35000', 'DPI persists across reload');
+  await page.locator('.dev-item[data-key="demo:reclusa"]').click();
+  await page.locator('[data-tab="keys"]').click();
+  assert.equal(await page.locator('[data-act="key"][data-k="30"]').inputValue(), 'key', 'key mapping persists across reload');
   assert.deepEqual(errors, [], 'no uncaught JavaScript errors');
-  console.log(`${count} layout checks passed; navigation, persistence, valid/invalid imports passed.`);
+  console.log(`${count} layout checks passed; navigation, persistence, valid/invalid imports and key remapping passed.`);
 } finally {
   await browser?.close();
   await new Promise(r => server.close(r));

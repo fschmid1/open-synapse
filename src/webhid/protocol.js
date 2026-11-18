@@ -169,6 +169,17 @@ export const setButtonKey = (tx, button, layer, modifiers, usage) =>
 export const getButton = (tx, button, layer) =>
   report(tx, 0x02, 0x8c, 0x0a, [0x01, button, Math.min(layer, 1)]);
 
+// Keyboard key mapping. Same function ids as mouse buttons: 0 off, 1 mouse
+// button, 2 keyboard key. `key` is a Razer AT-101 key id, not a HID usage.
+export const KEYMAP_PROFILE = 1;
+export const KEYMAP_LAYER = 0;
+
+export const getKey = (tx, key, layer = KEYMAP_LAYER) =>
+  report(tx, 0x02, 0x8d, 0x50, [KEYMAP_PROFILE, key, layer]);
+
+export const setKey = (tx, key, fn, data, layer = KEYMAP_LAYER) =>
+  report(tx, 0x02, 0x0d, 0x50, [KEYMAP_PROFILE, key, layer, fn, data.length, ...data]);
+
 export const EFFECTS = ["off", "static", "breathing", "spectrum", "wave", "reactive", "starlight"];
 
 export function extEffect(tx, led, fx, colors, speed, dir) {

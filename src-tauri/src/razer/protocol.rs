@@ -327,6 +327,39 @@ pub fn get_button(tx: u8, button: u8, layer: u8) -> Report {
     Report::new(tx, 0x02, 0x8C, 0x0A, &[0x01, button, layer.min(1)])
 }
 
+// ---------------------------------------------------------------- keyboards
+
+/// Razer keyboards keep a two-layer key map per profile: 0 normal, 1 Hypershift.
+/// `key` is the Razer AT-101 key id, not a USB HID usage. `fn` is shared with
+/// the mouse button mapping: 0 off, 1 mouse button, 2 keyboard key.
+///
+/// Verified command family from the public Razer keyboard documentation and a
+/// BlackWidow V4 Pro 75%; the Reclusa is expected to use the same profile 1.
+pub const KEYMAP_PROFILE: u8 = 1;
+pub const KEYMAP_LAYER_STANDARD: u8 = 0;
+
+pub fn get_key(tx: u8, profile: u8, key: u8, layer: u8) -> Report {
+    Report::new(tx, 0x02, 0x8D, 0x50, &[profile, key, layer])
+}
+
+pub fn set_key(tx: u8, profile: u8, key: u8, layer: u8, function: u8, data: &[u8]) -> Report {
+    let mut args = vec![profile, key, layer, function, data.len() as u8];
+    args.extend_from_slice(data);
+    Report::new(tx, 0x02, 0x0D, 0x50, &args)
+}
+
+pub fn set_key_code(tx: u8, key: u8, modifiers: u8, usage: u8) -> Report {
+    set_key(tx, KEYMAP_PROFILE, key, KEYMAP_LAYER_STANDARD, 0x02, &[modifiers, usage])
+}
+
+pub fn set_key_mouse(tx: u8, key: u8, function: u8) -> Report {
+    set_key(tx, KEYMAP_PROFILE, key, KEYMAP_LAYER_STANDARD, 0x01, &[function])
+}
+
+pub fn set_key_off(tx: u8, key: u8) -> Report {
+    set_key(tx, KEYMAP_PROFILE, key, KEYMAP_LAYER_STANDARD, 0x00, &[])
+}
+
 // ---------------------------------------------------------------- lighting
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -471,6 +504,19 @@ mod tests {
         assert_eq!(&set_button_mouse(0x1F, 5, 0, 1).0[5..14], &[0x0A, 0x02, 0x0C, 0x01, 0x05, 0x00, 0x01, 0x01, 0x01]);
         assert_eq!(&set_button_mouse(0x1F, 5, 1, 5).0[8..14], &[0x01, 0x05, 0x01, 0x01, 0x01, 0x05]);
         assert_eq!(&set_button_key(0x1F, 5, 0, 0, 0x04).0[5..18], &[0x0A, 0x02, 0x0C, 0x01, 0x05, 0x00, 0x02, 0x02, 0x00, 0x04, 0, 0, 0]);
+    }
+
+    #[test]
+    fn keyboard_key_map_layout() {
+        // Captured layout for 02/0D [profile, key, layer, fn, len, data…].
+        let set = set_key_code(0x1F, 26, 0, 0x46);
+        assert_eq!(&set.0[5..14], &[0x50, 0x02, 0x0D, 0x01, 0x1A, 0x00, 0x02, 0x02, 0x00]);
+        assert_eq!(&set.0[8..15], &[0x01, 0x1A, 0x00, 0x02, 0x02, 0x00, 0x46]);
+        let get = get_key(0x1F, 1, 26, 1);
+        assert_eq!(&get.0[5..8], &[0x50, 0x02, 0x8D]);
+        assert_eq!(&get.0[8..11], &[0x01, 0x1A, 0x01]);
+        assert_eq!(&set_key_off(0x1F, 31).0[8..13], &[0x01, 0x1F, 0x00, 0x00, 0x00]);
+        assert_eq!(&set_key_mouse(0x1F, 31, 4).0[8..14], &[0x01, 0x1F, 0x00, 0x01, 0x01, 0x04]);
     }
 
     #[test]

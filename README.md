@@ -27,6 +27,7 @@ Open Synapse is one small (~10 MB) Rust app that opens instantly and simply conf
 - **Lighting** — static color, breathing (1 or 2 colors), spectrum, wave, reactive, starlight; brightness, speed, direction, individual zones (logo, wheel, etc.) with a live preview.
 - **Power** — charge and charging status, time to sleep, low-battery threshold, dongle indicator mode.
 - **Buttons** — wheel and side buttons to any mouse function or key (with Ctrl/Shift/Alt/Win). Left and right are not remappable so a preset never leaves you without a click.
+- **Keys** — on the Reclusa X Mini 65% every listed key can send another key (with Ctrl/Shift/Alt/Win), a mouse button or nothing. Every write is read back. Macros are not available yet; their program format is undocumented.
 - **Calibration** — lift-off distance (low/medium/high), dynamic sensitivity with "classic", "natural", "jump" and custom curves.
 - **Sleeping mouse** — if a wireless mouse falls asleep, the app notices and does not mistake the dongle for the mouse.
 - **Portable presets** — a preset is not tied to a model: apply one mouse's settings to another, export to an `.osp` file or share an `OSP1.…` code in chat. Unsupported parameters are skipped, DPI is clamped to the sensor maximum.
@@ -41,7 +42,7 @@ Open Synapse is one small (~10 MB) Rust app that opens instantly and simply conf
 
 ## Supported devices
 
-The database has 70+ models: mice (DeathAdder, Viper, Basilisk, Naga, Cobra, Orochi), keyboards (BlackWidow, Huntsman, Ornata, Cynosa), Tartarus/Orbweaver keypads, Firefly/Goliathus/Strider mousepads, docks and stands. The full list is in [`src-tauri/src/razer/models.rs`](src-tauri/src/razer/models.rs).
+The database has 70+ models: mice (DeathAdder, Viper, Basilisk, Naga, Cobra, Orochi), keyboards (BlackWidow, Huntsman, Ornata, Cynosa, Reclusa), Tartarus/Orbweaver keypads, Firefly/Goliathus/Strider mousepads, docks and stands. The full list is in [`src-tauri/src/razer/models.rs`](src-tauri/src/razer/models.rs).
 
 A device that is not in the database is still detected: capabilities are guessed from its Product ID, and the interface marks it "Unverified".
 
@@ -129,10 +130,23 @@ Presets are stored in `library.json` in the app's settings folder (`%APPDATA%\de
 
 Everything in the "Buttons", "Calibration" and "Dongle LED" sections was captured from the official app's USB traffic (USBPcap) on the **Viper V3 Pro** and re-checked on the mouse itself: the value is written, read back and returned. For other models these features are currently disabled. To add a model, do the same: record the traffic and attach the decode to a pull request.
 
+Keyboard key remapping uses the documented `02/0D` (set) and `02/8D` (get) keyboard commands and is enabled only for the **Reclusa X Mini 65%** (68 keys, standard layer). The Reclusa itself has not been captured yet, so treat the first write as a test: every mapping is read back and a mismatch is reported instead of being hidden. Macros (function ids 3/4/5/15) are not implemented; an existing mapping this app does not understand is shown as "Macro / other" and is left untouched. On the standard layer, `s.keys` in a preset holds only the keys that differ from the factory mapping, keyed by Razer AT-101 key id (not USB HID usage):
+
+```json
+"keys": {
+  "30": { "kind": "key", "modifiers": 1, "usage": 0 },
+  "58": { "kind": "mouse", "function": 4 },
+  "31": { "kind": "off" }
+}
+```
+
+That makes Caps Lock act as Left Ctrl, Left Ctrl act as the back mouse button and A do nothing. `usage` is the HID usage for ordinary keys; modifier keys use a zero usage and set the matching bit in `modifiers` (1 LCtrl, 2 LShift, 4 LAlt, 8 LWin, 16 RCtrl, 32 RShift, 64 RAlt, 128 RWin).
+
 Tests on real hardware are marked `#[ignore]` and run explicitly:
 
 ```bash
 cargo test --manifest-path src-tauri/Cargo.toml probe_hardware -- --ignored --nocapture
+cargo test --manifest-path src-tauri/Cargo.toml hardware_keys -- --ignored --nocapture
 ```
 
 ## Contributing

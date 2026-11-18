@@ -401,6 +401,16 @@ input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 12p
 .setting .d { color: var(--text-3); font-size: 12.5px; margin-top: 2px; }
 [data-theme="win95"] .setting { border-color: #a0a0a0; padding: 12px 6px; }
 
+/* keyboard key map */
+.km-list { max-height: 62vh; overflow: auto; }
+.km-group + .km-group { margin-top: 8px; }
+.km-group .field-label { position: sticky; top: 0; z-index: 1; background: var(--panel); padding: 12px 0 8px; margin: 0; }
+.km-row { padding: 10px 0; }
+.km-key { min-width: 0; }
+.km-row .select { width: 200px; max-width: 42vw; }
+.km-row .btn { white-space: nowrap; }
+[data-theme="win95"] .km-group .field-label { background: #c0c0c0; }
+
 /* ============================================================ lighting */
 .effects { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 1px; padding: 1px; }
 .fx { padding: 12px; text-align: left; background: var(--bg); outline: 1px solid var(--line-2); transition: background 0.15s; display: flex; flex-direction: column; gap: 10px; }

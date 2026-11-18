@@ -1,6 +1,7 @@
 import { t, applyTranslations } from "./i18n.js";
 import { deviceArt, icons } from "./art.js";
 import { PRODUCT_IMAGE } from "./devices/index.js";
+import { KEYMAP_KEYS, keyDef } from "./webhid/models.js";
 
 const tauri = window.__TAURI__;
 const invoke = tauri ? tauri.core.invoke : async () => { throw new Error("no backend"); };
@@ -44,10 +45,19 @@ const HID = (() => {
   return m;
 })();
 const HID_NAME = Object.fromEntries(Object.entries(HID).map(([code, id]) => [id, code.replace(/^Key|^Digit/, "")]));
-const keyLabel = (k) =>
-  [k.modifiers & 1 && "Ctrl", k.modifiers & 2 && "Shift", k.modifiers & 4 && "Alt", k.modifiers & 8 && "Win", HID_NAME[k.usage] || "0x" + k.usage.toString(16)]
-    .filter(Boolean)
-    .join(" + ");
+// modifier bit per KeyboardEvent.code, matching the Razer key-map byte
+const MOD_BITS = { ControlLeft: 1, ShiftLeft: 2, AltLeft: 4, MetaLeft: 8, ControlRight: 16, ShiftRight: 32, AltRight: 64, MetaRight: 128 };
+const MOD_NAMES = [[1, "Ctrl"], [2, "Shift"], [4, "Alt"], [8, "Win"], [16, "R Ctrl"], [32, "R Shift"], [64, "R Alt"], [128, "R Win"]];
+const modLabel = (mods) => MOD_NAMES.filter(([bit]) => mods & bit).map(([, name]) => name);
+const keyLabel = (k) => {
+  const usage = k.usage ? HID_NAME[k.usage] || "0x" + k.usage.toString(16) : "";
+  return [...modLabel(k.modifiers || 0), usage].filter(Boolean).join(" + ") || "—";
+};
+const defaultKeyMap = (key) =>
+  key.modifier ? { kind: "key", modifiers: key.modifier, usage: 0 } : { kind: "key", modifiers: 0, usage: key.usage };
+const sameKeyMap = (a, b) => a.kind === b.kind && a.modifiers === b.modifiers && a.usage === b.usage && a.function === b.function;
+const mapLabel = (m) =>
+  m.kind === "off" ? t("keyOff") : m.kind === "other" ? t("keyOther") : m.kind === "mouse" ? t("fn" + m.function) : keyLabel(m);
 const STAGE_COLORS = ["#ff4d4d", "#3ee07a", "#4d8bff", "#2fd8e6", "#ffd23b"];
 const FX_COLOR = { static: 1, breathing: 2, reactive: 1, starlight: 1 };
 const FX_SPEED = new Set(["wave", "reactive", "starlight"]);
@@ -60,6 +70,8 @@ const DEMO = [
     caps: { dpi: true, stages: true, max_dpi: 26000, polling: [125, 500, 1000], battery: false, idle: false, lighting: true, brightness: true, effects: EXT_FX, zones: [{ id: 4, name: "logo" }, { id: 1, name: "scroll" }] } },
   { key: "demo:bw", name: "BlackWidow V4", kind: "keyboard", firmware: "v2.01",
     caps: { dpi: false, stages: false, max_dpi: 0, polling: [], battery: false, idle: false, lighting: true, brightness: true, effects: EXT_FX, zones: [{ id: 5, name: "backlight" }] } },
+  { key: "demo:reclusa", pid: 0x02e3, name: "Reclusa X Mini 65%", kind: "keyboard", firmware: "v1.00",
+    caps: { dpi: false, stages: false, max_dpi: 0, polling: [], battery: false, idle: false, lighting: true, brightness: true, effects: EXT_FX, zones: [{ id: 5, name: "backlight" }], keymap: true } },
   { key: "demo:firefly", pid: 0x0c04, name: "Firefly V2", kind: "mousepad", firmware: "v1.01",
     caps: { dpi: false, stages: false, max_dpi: 0, polling: [], battery: false, idle: false, lighting: true, brightness: true, effects: EXT_FX, zones: [{ id: 0, name: "all" }] } },
 ].map((d) => ({ pid: 0, ...d, wireless: d.wireless ?? false, receiver: false, verified: true, online: true, serial: null, demo: true, ...d }));
@@ -72,6 +84,7 @@ const state = {
   zone: null,
   hw: {},
   seen: new Set(),
+  keyListen: null,
 };
 
 // ------------------------------------------------------------------ helpers
@@ -196,6 +209,12 @@ function normalize(s = {}) {
     };
   }
   if (!zones.all) zones.all = defaultFx();
+  const keys = {};
+  for (const [id, v] of Object.entries(s.keys || {})) {
+    const key = keyDef(+id);
+    const map = key && normKey(v);
+    if (map && !sameKeyMap(map, defaultKeyMap(key))) keys[key.id] = map;
+  }
   return {
     dpi: { stages, active: num(s.dpi?.active, 0, 0, stages.length - 1), split: !!s.dpi?.split },
     polling: num(s.polling, 1000, 125, 8000),
@@ -207,6 +226,7 @@ function normalize(s = {}) {
       customMax: Number.isFinite(+s.calib?.customMax) ? clamp(+s.calib.customMax, 1, 2.5) : 1.5,
     },
     buttons: Object.fromEntries(REMAPPABLE.map((b) => [b, normButton(b, s.buttons?.[b])])),
+    keys,
     dongle: { led: num(s.dongle?.led, 2, 1, 3) },
     headset: { eq: ["game", "movie", "music"].includes(s.headset?.eq) ? s.headset.eq : "game" },
     power: { idle: num(s.power?.idle, 300, 60, 900), lowBattery: num(s.power?.lowBattery, 15, 5, 100) },
@@ -219,6 +239,17 @@ function normButton(b, v) {
   if (v?.kind === "key" && +v.usage >= 0x04 && +v.usage <= 0xe7) return { kind: "key", modifiers: (+v.modifiers || 0) & 15, usage: +v.usage };
   if (v?.kind === "mouse" && MOUSE_FUNCS.includes(+v.function)) return { kind: "mouse", function: +v.function };
   return { kind: "mouse", function: b };
+}
+
+function normKey(v) {
+  if (v?.kind === "off") return { kind: "off" };
+  if (v?.kind === "key") {
+    const modifiers = (+v.modifiers || 0) & 0xff;
+    const usage = +v.usage || 0;
+    if (usage === 0 ? modifiers !== 0 : usage >= 0x04 && usage <= 0xe7) return { kind: "key", modifiers, usage };
+  }
+  if (v?.kind === "mouse" && MOUSE_FUNCS.includes(+v.function)) return { kind: "mouse", function: +v.function };
+  return null;
 }
 
 function settingsFromHw(dev) {
@@ -238,6 +269,11 @@ function settingsFromHw(dev) {
   if (hw.dongle_led != null) s.dongle.led = hw.dongle_led;
   if (hw.curve != null) s.calib.curve = hw.curve;
   for (const m of hw.buttons || []) if (REMAPPABLE.includes(m.button)) s.buttons[m.button] = normButton(m.button, m);
+  for (const m of hw.keys || []) {
+    const key = keyDef(m.key);
+    const map = key && normKey(m);
+    if (map && !sameKeyMap(map, defaultKeyMap(key))) s.keys[key.id] = map;
+  }
   if (hw.low_battery) s.power.lowBattery = clamp(hw.low_battery, 5, 100);
   return s;
 }
@@ -302,11 +338,13 @@ function decodeAny(text) {
 // ------------------------------------------------------------------ hardware
 
 async function hw(dev, cmd, args = {}) {
-  if (dev.demo || !dev.online) return;
+  if (dev.demo || !dev.online) return false;
   try {
     await call(cmd, { key: dev.key, ...args });
+    return true;
   } catch (e) {
     toast(t("deviceError", { device: dev.name, error: errText(e) }), "error");
+    return false;
   }
 }
 
@@ -364,6 +402,29 @@ function applyButtons(dev, s) {
   }, 200);
 }
 
+// Only keys whose mapping differs from what the device last reported are
+// written, so applying a preset does not rewrite all 68 keys every time.
+function applyKeys(dev, s) {
+  if (!dev.caps.keymap) return;
+  debounce("keys" + dev.key, async () => {
+    const hwKeys = state.hw[dev.key]?.keys;
+    const known = hwKeys && hwKeys.length > 0;
+    for (const key of KEYMAP_KEYS) {
+      const override = s.keys[key.id];
+      if (!known && !override) continue;
+      const want = override || defaultKeyMap(key);
+      const have = hwKeys?.find((k) => k.key === key.id);
+      if (have && !override && !normKey(have)) continue;
+      if (have && sameKeyMap(have, want)) continue;
+      if (!(await hw(dev, "set_key", { id: key.id, map: want }))) continue;
+      if (!hwKeys) continue;
+      const i = hwKeys.findIndex((k) => k.key === key.id);
+      if (i >= 0) hwKeys[i] = { key: key.id, ...want };
+      else hwKeys.push({ key: key.id, ...want });
+    }
+  }, 250);
+}
+
 function applyHeadset(dev, s) {
   if (!dev.caps.eq) return;
   debounce("eq" + dev.key, () => hw(dev, "set_headset_eq", { preset: s.headset.eq }), 200);
@@ -372,6 +433,7 @@ function applyHeadset(dev, s) {
 function applyAll(dev, p) {
   applyHeadset(dev, p.settings);
   applyButtons(dev, p.settings);
+  applyKeys(dev, p.settings);
   applyCalib(dev, p.settings);
   applyDpi(dev, p.settings);
   applyPolling(dev, p.settings);
@@ -554,6 +616,7 @@ function deviceView(dev) {
     ["lighting", dev.caps.lighting],
     ["power", dev.caps.idle || dev.caps.battery],
     ["buttons", dev.caps.remap],
+    ["keys", dev.caps.keymap],
     ["calibration", dev.caps.liftoff],
   ].filter(([, ok]) => ok).map(([id]) => id);
   if (!tabs.includes(state.tab)) state.tab = tabs[0] || "performance";
@@ -583,6 +646,7 @@ function deviceView(dev) {
   else if (state.tab === "lighting") body = lightingTab(dev, p.settings);
   else if (state.tab === "calibration") body = calibTab(dev, p.settings);
   else if (state.tab === "buttons") body = buttonsTab(dev, p.settings);
+  else if (state.tab === "keys") body = keysTab(dev, p.settings);
   else body = powerTab(dev, p.settings);
 
   const [first, ...rest] = dev.name.split(" ");
@@ -752,6 +816,46 @@ function buttonsTab(dev, s) {
     </div></div>
     <div class="card span-4">${head(2, t("remapNote"))}<div class="card-body">
       <p class="hint" style="margin:0">${esc(t("remapNoteText"))}</p>
+    </div></div>
+  </div>`;
+}
+
+function keysTab(dev, s) {
+  const NAV = new Set([76, 80, 81, 85, 86, 79, 83, 84, 89]);
+  const hwKeys = state.hw[dev.key]?.keys || [];
+  const row = (key) => {
+    const m = s.keys[key.id];
+    const def = defaultKeyMap(key);
+    const hwEntry = hwKeys.find((k) => k.key === key.id);
+    const other = !m && !!hwEntry && !normKey(hwEntry);
+    const sel = m ? (m.kind === "off" ? "off" : m.kind === "mouse" ? "m" + m.function : "key") : "";
+    const listening = state.keyListen === key.id;
+    const shown = m || (other ? { kind: "other" } : null);
+    return `<div class="setting km-row">
+      <div class="km-key"><div class="t">${esc(key.label)}</div>
+        <div class="d">${shown ? esc(mapLabel(shown)) : esc(t("keyDefault"))}${m ? ` · ${esc(t("keyDefault"))}: ${esc(keyLabel(def))}` : ""}</div></div>
+      ${other ? `<span class="chip warn">${esc(t("keyOther"))}</span>` : `<div class="row" style="gap:8px;margin:0">
+        <select class="select" data-act="key" data-k="${key.id}">
+          <option value="" ${sel === "" ? "selected" : ""}>${esc(t("keyDefault"))}</option>
+          ${MOUSE_FUNCS.map((f) => `<option value="m${f}" ${sel === "m" + f ? "selected" : ""}>${esc(t("fn" + f))}</option>`).join("")}
+          <option value="off" ${sel === "off" ? "selected" : ""}>${esc(t("keyOff"))}</option>
+          <option value="key" ${sel === "key" ? "selected" : ""}>${esc(m?.kind === "key" ? t("fnKey") + ": " + keyLabel(m) : t("fnKey") + "…")}</option>
+        </select>
+        ${sel === "key" || listening ? `<button class="btn ${listening ? "primary" : ""}" data-act="key-listen" data-k="${key.id}">${esc(listening ? t("pressKey") : t("changeKey"))}</button>` : ""}
+      </div>`}
+    </div>`;
+  };
+  const group = (title, keys) => `<div class="km-group"><div class="field-label">${esc(title)}</div>${keys.map(row).join("")}</div>`;
+  return `<div class="grid">
+    <div class="card span-8">${head(1, t("keymap"), esc(t("keymapLayer")))}<div class="card-body">
+      <div class="km-list">
+        ${group(t("keyGroupMain"), KEYMAP_KEYS.filter((k) => !NAV.has(k.id)))}
+        ${group(t("keyGroupNav"), KEYMAP_KEYS.filter((k) => NAV.has(k.id)))}
+      </div>
+    </div></div>
+    <div class="card span-4">${head(2, t("keymapNote"))}<div class="card-body">
+      <p class="hint" style="margin:0 0 14px">${esc(t("keymapNoteText"))}</p>
+      <p class="hint" style="margin:0">${esc(t("keymapUnverified"))}</p>
     </div></div>
   </div>`;
 }
@@ -975,17 +1079,21 @@ async function onClick(e) {
     state.view = { type: "device", key: item.dataset.key };
     state.zone = null;
     state.listen = null;
+    state.keyListen = null;
     return render(true);
   }
   const nav = e.target.closest(".nav-btn");
   if (nav) {
     state.view = { type: nav.dataset.view };
     state.listen = null;
+    state.keyListen = null;
     return render(true);
   }
   const tab = e.target.closest("[data-tab]");
   if (tab) {
     state.tab = tab.dataset.tab;
+    state.listen = null;
+    state.keyListen = null;
     return rerender();
   }
 
@@ -1100,6 +1208,12 @@ async function onClick(e) {
     case "listen":
       state.listen = state.listen === +el.dataset.b ? null : +el.dataset.b;
       return rerender();
+    case "key-listen": {
+      const id = +el.dataset.k;
+      state.keyListen = state.keyListen === id ? null : id;
+      state.listen = null;
+      return rerender();
+    }
     case "eq":
       s.headset.eq = el.dataset.v;
       touch(p); applyHeadset(dev, s);
@@ -1286,6 +1400,20 @@ async function onChange(e) {
       touch(p); applyButtons(dev, p.settings);
     }
     rerender();
+  } else if (act === "key" && dev) {
+    const p = presetFor(dev);
+    const id = +el.dataset.k;
+    const v = el.value;
+    if (v === "key") {
+      state.keyListen = id;
+    } else {
+      state.keyListen = null;
+      if (v === "") delete p.settings.keys[id];
+      else if (v === "off") p.settings.keys[id] = { kind: "off" };
+      else if (v.startsWith("m")) p.settings.keys[id] = { kind: "mouse", function: +v.slice(1) };
+      touch(p); applyKeys(dev, p.settings);
+    }
+    rerender();
   } else if (act === "autoapply") {
     st.autoApply = el.checked;
     saveLib();
@@ -1333,9 +1461,33 @@ async function boot() {
     state.view = { type: "device", key: item.dataset.key };
     state.zone = null;
     state.listen = null;
+    state.keyListen = null;
     render(true);
   });
   document.addEventListener("keydown", (e) => {
+    if (state.keyListen != null) {
+      const dev = currentDevice();
+      if (!dev) { state.keyListen = null; return; }
+      e.preventDefault();
+      if (e.code === "Escape") { state.keyListen = null; return rerender(); }
+      const id = state.keyListen;
+      const key = keyDef(id);
+      if (!key) { state.keyListen = null; return rerender(); }
+      let map;
+      if (MOD_BITS[e.code]) {
+        map = { kind: "key", modifiers: MOD_BITS[e.code], usage: 0 };
+      } else {
+        const usage = HID[e.code];
+        if (!usage) return toast(t("keyUnsupported"), "error");
+        map = { kind: "key", modifiers: (e.ctrlKey ? 1 : 0) | (e.shiftKey ? 2 : 0) | (e.altKey ? 4 : 0) | (e.metaKey ? 8 : 0), usage };
+      }
+      const p = presetFor(dev);
+      if (sameKeyMap(map, defaultKeyMap(key))) delete p.settings.keys[id];
+      else p.settings.keys[id] = map;
+      state.keyListen = null;
+      touch(p); applyKeys(dev, p.settings);
+      return rerender();
+    }
     if (state.listen == null) return;
     const dev = currentDevice();
     if (!dev || ["ControlLeft", "ControlRight", "ShiftLeft", "ShiftRight", "AltLeft", "AltRight", "MetaLeft", "MetaRight"].includes(e.code)) return;

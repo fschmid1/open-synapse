@@ -16,8 +16,11 @@ import {
   DONGLE_LED,
   DYNSENS,
   REMAP,
+  KEYMAP,
   RECEIVER,
   WIRELESS,
+  KEYMAP_KEYS,
+  keyDef,
   lookup,
   capsOf,
 } from "./models.js";
@@ -411,6 +414,7 @@ function emptyState() {
     dynamic_sensitivity: null,
     curve: null,
     buttons: [],
+    keys: [],
   };
 }
 
@@ -501,7 +505,30 @@ export async function deviceState(key) {
       else if (a[3] === 0x02) s.buttons.push({ kind: "key", button, modifiers: a[5], usage: a[6] });
     }
   }
+  if (caps.keymap) {
+    // Probe one key first: an unsupported command would otherwise cost one
+    // failed transfer for every key in the table.
+    const probe = KEYMAP_KEYS.length ? await q(P.getKey(link.tx, KEYMAP_KEYS[0].id)) : null;
+    if (probe) {
+      for (const key of KEYMAP_KEYS) {
+        const r = key.id === KEYMAP_KEYS[0].id ? probe : await q(P.getKey(link.tx, key.id));
+        const map = keyMapFrom(key.id, r);
+        if (map) s.keys.push({ key: key.id, ...map });
+      }
+    }
+  }
   return s;
+}
+
+/** Parses a `02/8D [profile, key, layer, fn, len, data…]` reply. */
+function keyMapFrom(key, r) {
+  if (!r) return null;
+  const a = P.args(r);
+  if (a[0] !== P.KEYMAP_PROFILE || a[1] !== key || a[2] !== P.KEYMAP_LAYER) return null;
+  if (a[3] === 0x00) return { kind: "off" };
+  if (a[3] === 0x01 && a[4] >= 1) return { kind: "mouse", function: a[5] };
+  if (a[3] === 0x02 && a[4] >= 2) return { kind: "key", modifiers: a[5], usage: a[6] };
+  return { kind: "other", function: a[3] };
 }
 
 export async function setDpi(key, x, y) {
@@ -584,6 +611,45 @@ export async function setButton(key, map) {
     throw new Error("unknown button map");
   }
   await transfer(link.device, req, link.reportId);
+}
+
+/**
+ * Maps one keyboard key on the standard layer and reads it back. The device
+ * must return exactly the mapping we wrote, otherwise the caller sees an error
+ * instead of a silent mismatch.
+ */
+export async function setKey(key, id, map) {
+  const { pid, link } = needLink(key);
+  if ((lookup(pid).flags & KEYMAP) === 0) throw new Error("key remapping is not supported on this device");
+  if (!keyDef(id)) throw new Error("unknown key");
+
+  let fn;
+  let data;
+  if (map.kind === "off") {
+    fn = 0x00;
+    data = [];
+  } else if (map.kind === "mouse") {
+    if (!MOUSE_FUNCS.includes(map.function)) throw new Error("unknown mouse function");
+    fn = 0x01;
+    data = [map.function];
+  } else if (map.kind === "key") {
+    const modifiers = map.modifiers & 0xff;
+    if (map.usage === 0 ? modifiers === 0 : map.usage < 0x04 || map.usage > 0xe7) throw new Error("unknown key");
+    fn = 0x02;
+    data = [modifiers, map.usage];
+  } else {
+    throw new Error("unknown key mapping");
+  }
+
+  await transfer(link.device, P.setKey(link.tx, id, fn, data), link.reportId);
+  const read = await transfer(link.device, P.getKey(link.tx, id), link.reportId);
+  const stored = keyMapFrom(id, read);
+  const ok =
+    stored &&
+    stored.kind === map.kind &&
+    (map.kind !== "mouse" || stored.function === map.function) &&
+    (map.kind !== "key" || (stored.modifiers === (map.modifiers & 0xff) && stored.usage === map.usage));
+  if (!ok) throw new Error("device stored a different key mapping");
 }
 
 export async function setPower(key, idle, lowBattery) {
@@ -694,6 +760,8 @@ export async function invoke(cmd, a = {}) {
       return setDynamicSensitivity(a.key, a.on, a.curve, a.customMax);
     case "set_button":
       return setButton(a.key, a.map);
+    case "set_key":
+      return setKey(a.key, a.id, a.map);
     case "set_headset_eq":
       return setHeadsetEq(a.key, a.preset);
     case "set_power":

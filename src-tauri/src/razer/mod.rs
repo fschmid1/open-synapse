@@ -36,6 +36,7 @@ pub struct Caps {
     pub dongle_led: bool,
     pub dynamic_sensitivity: bool,
     pub remap: bool,
+    pub keymap: bool,
     pub eq: bool,
     pub lighting: bool,
     pub brightness: bool,
@@ -74,6 +75,8 @@ pub struct DeviceState {
     pub curve: Option<u8>,
     /// mappings of the remappable buttons on the standard layer
     pub buttons: Vec<ButtonMap>,
+    /// key mappings read from a keyboard's standard layer
+    pub keys: Vec<KeyEntry>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
@@ -81,6 +84,24 @@ pub struct DeviceState {
 pub enum ButtonMap {
     Mouse { button: u8, function: u8 },
     Key { button: u8, modifiers: u8, usage: u8 },
+}
+
+/// A keyboard key assignment. `Other` is only produced when reading a mapping
+/// this app does not understand (for example a macro); it is never written.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+pub enum KeyMap {
+    Key { modifiers: u8, usage: u8 },
+    Mouse { function: u8 },
+    Off,
+    Other { function: u8 },
+}
+
+#[derive(Debug, Serialize, Clone, PartialEq)]
+pub struct KeyEntry {
+    pub key: u8,
+    #[serde(flatten)]
+    pub map: KeyMap,
 }
 
 #[derive(Debug, Deserialize)]
@@ -166,6 +187,7 @@ fn caps_of(m: &Model) -> Caps {
         dongle_led: has(DONGLE_LED),
         dynamic_sensitivity: has(DYNSENS),
         remap: has(REMAP),
+        keymap: has(KEYMAP),
         eq: has(HEADSET_EQ),
         lighting: has(LIGHT),
         brightness: has(BRIGHT),
@@ -186,6 +208,23 @@ fn serial_of(r: &Report) -> Option<String> {
         .filter(|c| c.is_ascii_graphic())
         .collect();
     (!s.is_empty()).then_some(s)
+}
+
+/// Parses `[profile, key, layer, fn, len, data…]` into an entry for the
+/// standard layer. Unknown function ids are kept as `Other` so the UI can
+/// offer a reset without pretending to understand them.
+fn key_entry(key: u8, r: &Report) -> Option<KeyEntry> {
+    let a = r.args();
+    if a[0] != protocol::KEYMAP_PROFILE || a[1] != key || a[2] != protocol::KEYMAP_LAYER_STANDARD {
+        return None;
+    }
+    let map = match a[3] {
+        0x00 => KeyMap::Off,
+        0x01 if a[4] >= 1 => KeyMap::Mouse { function: a[5] },
+        0x02 if a[4] >= 2 => KeyMap::Key { modifiers: a[5], usage: a[6] },
+        function => KeyMap::Other { function },
+    };
+    Some(KeyEntry { key, map })
 }
 
 impl Manager {
@@ -401,6 +440,22 @@ impl Manager {
                 }
             }
         }
+        if caps.keymap {
+            // Probe one key first: an unsupported command would otherwise cost
+            // one failed transfer for every key in the table.
+            let probe = KEYMAP_KEYS.first().map(|key| {
+                q(protocol::get_key(tx, protocol::KEYMAP_PROFILE, key.id, protocol::KEYMAP_LAYER_STANDARD))
+            });
+            if probe.flatten().is_some() {
+                for key in KEYMAP_KEYS {
+                    if let Some(r) = q(protocol::get_key(tx, protocol::KEYMAP_PROFILE, key.id, protocol::KEYMAP_LAYER_STANDARD)) {
+                        if let Some(entry) = key_entry(key.id, &r) {
+                            s.keys.push(entry);
+                        }
+                    }
+                }
+            }
+        }
         Ok(s)
     }
 
@@ -470,6 +525,48 @@ impl Manager {
         } else {
             Err("only the middle and side buttons can be remapped".into())
         }
+    }
+
+    /// Maps a keyboard key on the standard layer and reads it back.
+    pub fn set_key(&mut self, key: &str, key_id: u8, map: &KeyMap) -> Result<(), String> {
+        let (dev, tx, model) = self.open(key)?;
+        if model.flags & KEYMAP == 0 {
+            return Err("key remapping is not supported on this device".into());
+        }
+        if key_def(key_id).is_none() {
+            return Err("unknown key".into());
+        }
+        let report = match *map {
+            KeyMap::Off => protocol::set_key_off(tx, key_id),
+            KeyMap::Mouse { function } => {
+                if ![1u8, 2, 3, 4, 5, 9, 10].contains(&function) {
+                    return Err("unknown mouse function".into());
+                }
+                protocol::set_key_mouse(tx, key_id, function)
+            }
+            KeyMap::Key { modifiers, usage } => {
+                if usage == 0 {
+                    if modifiers == 0 {
+                        return Err("unknown key".into());
+                    }
+                } else if !(0x04..=0xE7).contains(&usage) {
+                    return Err("unknown key".into());
+                }
+                protocol::set_key_code(tx, key_id, modifiers, usage)
+            }
+            KeyMap::Other { .. } => return Err("unknown key mapping".into()),
+        };
+        protocol::transfer(&dev, &report).map_err(|e| e.to_string())?;
+        let read = protocol::transfer(
+            &dev,
+            &protocol::get_key(tx, protocol::KEYMAP_PROFILE, key_id, protocol::KEYMAP_LAYER_STANDARD),
+        )
+        .map_err(|e| e.to_string())?;
+        let stored = key_entry(key_id, &read).ok_or("device did not return the key mapping")?;
+        if stored.map != *map {
+            return Err("device stored a different key mapping".into());
+        }
+        Ok(())
     }
 
     pub fn set_dpi(&mut self, key: &str, x: u16, y: u16) -> Result<(), String> {
@@ -708,6 +805,60 @@ mod hardware_buttons {
             let r = protocol::transfer(&dev, &Report::new(tx, 0x0B, id, 0x02, &[0x01]));
             println!("{name}: {:?}", r.map(|r| format!("{:02x?}", &r.0[8..10])));
         }
+    }
+}
+
+#[cfg(test)]
+mod keymap_serde {
+    use super::*;
+
+    #[test]
+    fn key_entry_is_flat_json() {
+        let entry = KeyEntry { key: 30, map: KeyMap::Key { modifiers: 1, usage: 0 } };
+        assert_eq!(
+            serde_json::to_value(&entry).unwrap(),
+            serde_json::json!({ "key": 30, "kind": "key", "modifiers": 1, "usage": 0 })
+        );
+        let off = serde_json::to_value(KeyEntry { key: 31, map: KeyMap::Off }).unwrap();
+        assert_eq!(off, serde_json::json!({ "key": 31, "kind": "off" }));
+        let mouse = serde_json::to_value(KeyEntry { key: 32, map: KeyMap::Mouse { function: 4 } }).unwrap();
+        assert_eq!(mouse, serde_json::json!({ "key": 32, "kind": "mouse", "function": 4 }));
+    }
+}
+
+#[cfg(test)]
+mod hardware_keys {
+    use super::*;
+
+    /// Read-only: asks the Reclusa X Mini 65% for every key on the standard layer.
+    #[test]
+    #[ignore]
+    fn read_key_mappings() {
+        let mut m = Manager::new();
+        let d = m.refresh().unwrap().into_iter().find(|d| d.pid == 0x02E3 && d.online).expect("connected Reclusa X Mini 65%");
+        let state = m.state(&d.key).unwrap();
+        println!("{} keys:", state.keys.len());
+        for entry in &state.keys {
+            let label = key_def(entry.key).map(|k| k.label).unwrap_or("?");
+            println!("{:3} {:20} {:02x?}", entry.key, label, entry.map);
+        }
+    }
+
+    /// Writes Caps Lock as Left Ctrl, reads it back, then restores the original.
+    #[test]
+    #[ignore]
+    fn change_and_restore_key() {
+        let mut m = Manager::new();
+        let d = m.refresh().unwrap().into_iter().find(|d| d.pid == 0x02E3 && d.online).expect("connected Reclusa X Mini 65%");
+        let original = m.state(&d.key).unwrap().keys.into_iter().find(|k| k.key == 30).expect("Caps Lock mapping").map;
+        println!("original Caps Lock: {:02x?}", original);
+        m.set_key(&d.key, 30, &KeyMap::Key { modifiers: 0x01, usage: 0 }).unwrap();
+        let changed = m.state(&d.key).unwrap().keys.into_iter().find(|k| k.key == 30).unwrap().map;
+        println!("Caps Lock as Left Ctrl: {:02x?}", changed);
+        m.set_key(&d.key, 30, &original).unwrap();
+        let back = m.state(&d.key).unwrap().keys.into_iter().find(|k| k.key == 30).unwrap().map;
+        println!("restored Caps Lock: {:02x?}", back);
+        assert_eq!(back, original, "original mapping was not restored");
     }
 }
 

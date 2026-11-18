@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Add keyboard key remapping for the Reclusa X Mini 65% (`1532:02E3`): map a key on the standard layer to another key, a mouse button or Off, with every write read back. Macros are not supported; mappings this app does not understand are left untouched.
 - Make the app, documentation and UI tests English-only; the Russian locale and language switcher were removed.
 - Add a browser build that talks to Razer devices over WebHID. Run `npm run web` and open it in Chrome or Edge; presets and photos live in `localStorage`.
 - Let the web build disconnect a device from its page or the sidebar, or all devices at once, revoking the page's WebHID access until they are connected again.
