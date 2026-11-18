@@ -138,7 +138,7 @@ const confirmBox = (title, text) =>
 // ------------------------------------------------------------------ library
 
 function defaultLib() {
-  return { version: 1, presets: [], bindings: {}, photos: {}, settings: { lang: "ru", theme: "mono", autoApply: true, demo: !tauri } };
+  return { version: 1, presets: [], bindings: {}, photos: {}, settings: { lang: "en", theme: "mono", autoApply: true, demo: !tauri } };
 }
 
 async function loadLib() {
@@ -822,7 +822,7 @@ function settingsView() {
     <div class="grid" style="border-top:1px solid var(--line)">
       <div class="card">${head(2, t("general"))}
         <div class="setting"><div class="t">${esc(t("language"))}</div>
-          <div class="seg small" style="width:240px">${[["ru", "Русский"], ["en", "English"]].map(([v, l]) => `<button class="${st.lang === v ? "on" : ""}" data-act="lang" data-v="${v}">${l}</button>`).join("")}</div></div>
+          <div class="seg small" style="width:240px">${[["en", "English"], ["ru", "Русский"]].map(([v, l]) => `<button class="${st.lang === v ? "on" : ""}" data-act="lang" data-v="${v}">${l}</button>`).join("")}</div></div>
         <div class="setting"><div><div class="t">${esc(t("autoApply"))}</div><div class="d">${esc(t("autoApplyHint"))}</div></div>
           <label class="switch"><input type="checkbox" data-act="autoapply" ${st.autoApply ? "checked" : ""}><span></span></label></div>
         <div class="setting"><div><div class="t">${esc(t("demoMode"))}</div><div class="d">${esc(t("demoModeHint"))}</div></div>

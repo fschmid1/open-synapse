@@ -137,10 +137,10 @@ const dict = {
   },
 };
 
-let lang = "ru";
+let lang = "en";
 
 export function setLang(l) {
-  lang = dict[l] ? l : "ru";
+  lang = dict[l] ? l : "en";
   document.documentElement.lang = lang;
   document.querySelectorAll("[data-i18n]").forEach((el) => (el.textContent = t(el.dataset.i18n)));
 }
