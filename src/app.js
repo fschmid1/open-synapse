@@ -142,7 +142,7 @@ const confirmBox = (title, text) =>
 // ------------------------------------------------------------------ library
 
 function defaultLib() {
-  return { version: 1, presets: [], bindings: {}, photos: {}, settings: { lang: "en", theme: "mono", autoApply: true, demo: !tauri } };
+  return { version: 1, presets: [], bindings: {}, photos: {}, settings: { lang: "en", theme: "mono", autoApply: true, demo: false } };
 }
 
 async function loadLib() {
