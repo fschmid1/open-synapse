@@ -25,7 +25,10 @@
     <aside class="sidebar">
       <div class="side-head">
         <span class="eyebrow" data-i18n="devices"></span>
-        <span class="count" id="device-count">0</span>
+        <span class="side-head-right">
+          <span class="count" id="device-count">0</span>
+          <button class="side-add" data-act="connect" data-i18n-title="connectDevice" aria-label="Connect device">+</button>
+        </span>
       </div>
       <nav class="device-list" id="device-list"></nav>
       <div class="side-foot">
@@ -37,6 +40,7 @@
     <main class="main" id="main"></main>
   </div>
 
+  <input type="file" multiple accept=".osp,.json,application/json" data-import-input hidden>
   <div class="toasts" id="toasts"></div>
   <div class="modal-root" id="modal-root"></div>
 </body>

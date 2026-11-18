@@ -4,6 +4,10 @@ import { PRODUCT_IMAGE } from "./devices/index.js";
 
 const tauri = window.__TAURI__;
 const invoke = tauri ? tauri.core.invoke : async () => { throw new Error("no backend"); };
+let webBackend = null;
+const webMode = () => !tauri && !!webBackend;
+const call = (cmd, args) => (tauri ? invoke(cmd, args) : webBackend.invoke(cmd, args));
+const errText = (e) => (e && e.message ? e.message : String(e));
 
 // [background, sidebar, accent, text] for the theme picker preview
 const THEMES = {
@@ -143,18 +147,24 @@ function defaultLib() {
 
 async function loadLib() {
   let lib = defaultLib();
+  let migrated = false;
   try {
     const raw = tauri ? await invoke("load_library") : localStorage.getItem("osyn-lib");
     if (raw) {
       const parsed = JSON.parse(raw);
       lib = { ...lib, ...parsed, settings: { ...lib.settings, ...parsed.settings } };
       lib.photos = lib.photos || {};
-      lib.presets = (lib.presets || []).map((p) => ({ ...p, settings: normalize(p.settings) }));
+      lib.presets = (lib.presets || []).map((p) => {
+        const name = typeof p.name === "string" ? p.name.replace(/ — основной$/, " — main") : p.name;
+        if (name !== p.name) migrated = true;
+        return { ...p, name, settings: normalize(p.settings) };
+      });
     }
   } catch (e) {
     console.warn("library load failed", e);
   }
   state.lib = lib;
+  if (migrated) saveLib();
 }
 
 function saveLib() {
@@ -299,9 +309,9 @@ function decodeAny(text) {
 async function hw(dev, cmd, args = {}) {
   if (dev.demo || !dev.online) return;
   try {
-    await invoke(cmd, { key: dev.key, ...args });
+    await call(cmd, { key: dev.key, ...args });
   } catch (e) {
-    toast(t("deviceError", { device: dev.name, error: e }), "error");
+    toast(t("deviceError", { device: dev.name, error: errText(e) }), "error");
   }
 }
 
@@ -381,7 +391,7 @@ async function readHw(dev) {
   }
   if (!dev.online) return;
   try {
-    state.hw[dev.key] = await invoke("device_state", { key: dev.key });
+    state.hw[dev.key] = await call("device_state", { key: dev.key });
   } catch (e) {
     console.warn(e);
   }
@@ -391,10 +401,10 @@ async function readHw(dev) {
 
 async function poll() {
   let list = [];
-  if (tauri) {
+  if (tauri || webMode()) {
     try {
       // a sleeping mouse behind its receiver cannot be read or written
-      list = (await invoke("list_devices")).map((d) => ({ ...d, online: d.online && !d.asleep }));
+      list = (await call("list_devices")).map((d) => ({ ...d, online: d.online && !d.asleep }));
     } catch (e) {
       console.warn(e);
     }
@@ -444,14 +454,14 @@ function renderSidebar() {
   $("#device-count").textContent = state.devices.length;
   const list = $("#device-list");
   if (!state.devices.length) {
-    list.innerHTML = `<div class="side-empty">${esc(t("noDevicesSide"))}</div>`;
+    list.innerHTML = `<div class="side-empty">${esc(t(webMode() ? "noDevicesSideWeb" : "noDevicesSide"))}</div>`;
   } else {
     list.innerHTML = state.devices
       .map((d) => {
         const b = state.hw[d.key]?.battery;
         const active = state.view.type === "device" && state.view.key === d.key;
         const sub = d.demo ? t("demo") : d.asleep ? t("sleeping") : d.online ? (d.wireless ? t("wireless") : t("wired")) : t("asleep");
-        return `<button class="dev-item ${active ? "active" : ""}" data-key="${esc(d.key)}">
+        return `<button class="dev-item ${active ? "active" : ""}" data-key="${esc(d.key)}"${d.error ? ` title="${esc(d.error)}"` : ""}>
           <span class="dev-icon">${devicePhoto(d) ? `<img src="${devicePhoto(d)}" alt="">` : icons[d.kind] || icons.other}</span>
           <span style="min-width:0"><div class="dev-name">${esc(d.name)}</div>
           <div class="dev-sub"><span class="dot ${d.online ? "" : "off"}"></span>${esc(sub)}</div></span>
@@ -501,11 +511,19 @@ function ruler() {
 }
 
 function emptyView() {
+  const web = webMode();
+  const canHid = web && webBackend.supported;
+  const title = web ? t("emptyTitleWeb") : t("emptyTitle");
+  const text = web ? t("emptyTextWeb") : t("emptyText");
   return `<div class="page">${ruler()}<div class="empty"><div class="empty-inner">
     <div class="pulse"><img src="logo.svg" alt=""></div>
     <span class="eyebrow">00 / ${esc(t("devices"))}</span>
-    <h2>${esc(t("emptyTitle"))}</h2><p>${esc(t("emptyText"))}</p>
-    <button class="btn primary" data-act="demo-on">${esc(t("tryDemo"))}</button>
+    <h2>${esc(title)}</h2><p>${esc(text)}</p>
+    ${web && !canHid ? `<p class="hint">${esc(t("noWebHid"))}</p>` : ""}
+    <div class="empty-actions">
+      ${canHid ? `<button class="btn primary" data-act="connect">${esc(t("connectDevice"))}</button>` : ""}
+      <button class="btn ${canHid ? "" : "primary"}" data-act="demo-on">${esc(t("tryDemo"))}</button>
+    </div>
   </div></div></div>`;
 }
 
@@ -548,7 +566,9 @@ function deviceView(dev) {
     dev.demo ? `<span class="chip solid">${esc(t("demo"))}</span>` : "",
     `<span class="chip">${dev.wireless ? I.wifi : I.cable}${esc(conn)}</span>`,
     dev.firmware ? `<span class="chip">${I.chip}FW ${esc(dev.firmware)}</span>` : "",
-    !dev.online ? `<span class="chip warn">${esc(t(dev.asleep ? "sleepingHint" : "asleep"))}</span>` : "",
+    !dev.online
+      ? `<button class="chip warn" data-act="diagnose" title="${esc(dev.error || t("diagnoseHint"))}">${esc(t(dev.asleep ? "sleepingHint" : "asleep"))}</button>`
+      : "",
     !dev.verified ? `<span class="chip warn" title="${esc(t("unverifiedHint"))}">${esc(t("unverified"))}</span>` : "",
   ].join("");
 
@@ -573,6 +593,7 @@ function deviceView(dev) {
         <span class="kind-label"><b>${pad2(idx)}</b> / ${esc(t("kind_" + dev.kind))} · ${esc(conn)}</span>
         <h1>${title}</h1>
         <div class="chips">${chips}</div>
+        ${!dev.online && dev.error ? `<p class="hint" style="margin:8px 0 0;max-width:560px">${esc(dev.error)}</p>` : ""}
         ${batteryBlock(dev)}
         <div class="preset-bar">
           <select class="select" data-act="bind" aria-label="${esc(t("preset"))}">${options}</select>
@@ -811,6 +832,37 @@ function libraryView() {
   </div>`;
 }
 
+async function runDiagnostics() {
+  if (!webMode()) return;
+  let data;
+  try {
+    data = await webBackend.diag();
+  } catch (e) {
+    return toast(errText(e), "error");
+  }
+  const text = JSON.stringify(data, null, 2);
+  console.log("Open Synapse WebHID diagnostics\n" + text);
+  await modal({
+    title: t("diagnostics"),
+    body: `<pre class="diag">${esc(text)}</pre><p class="hint">${esc(t("diagnosticsHint"))}</p>`,
+    actions: [
+      { label: t("cancel"), kind: "ghost" },
+      {
+        label: t("copyDetails"),
+        kind: "primary",
+        value: async () => {
+          try {
+            await navigator.clipboard.writeText(text);
+            toast(t("codeCopied"));
+          } catch {
+            toast(t("diagnosticsHint"), "error");
+          }
+        },
+      },
+    ],
+  });
+}
+
 function settingsView() {
   const st = state.lib.settings;
   return `<div class="page">${ruler()}
@@ -827,10 +879,12 @@ function settingsView() {
           <label class="switch"><input type="checkbox" data-act="autoapply" ${st.autoApply ? "checked" : ""}><span></span></label></div>
         <div class="setting"><div><div class="t">${esc(t("demoMode"))}</div><div class="d">${esc(t("demoModeHint"))}</div></div>
           <label class="switch"><input type="checkbox" data-act="demo" ${st.demo ? "checked" : ""}><span></span></label></div>
+        ${webMode() ? `<div class="setting"><div><div class="t">${esc(t("browserAccess"))}</div><div class="d">${esc(webBackend.supported ? t("browserAccessHint") : t("noWebHid"))}</div></div>
+          ${webBackend.supported ? `<button class="btn" data-act="connect">${esc(t("connectDevice"))}</button>` : ""}</div>` : ""}
       </div>
       <div class="card">${head(3, t("about"), "v0.1.1 · MIT")}
         <div class="about"><img src="logo.svg" alt=""><div><b>Open Synapse</b><p class="muted" style="margin:6px 0 0">${esc(t("aboutText"))}</p>
-        <p class="hint" style="margin:6px 0 0">${esc(t("dataFolder"))}</p></div></div>
+        <p class="hint" style="margin:6px 0 0">${esc(t(webMode() ? "dataFolderWeb" : "dataFolder"))}</p></div></div>
       </div>
     </div>
   </div>`;
@@ -946,6 +1000,16 @@ async function onClick(e) {
       state.lib.settings.demo = true;
       saveLib();
       return poll();
+    case "connect": {
+      if (!webMode() || !webBackend.supported) return;
+      try {
+        const n = await webBackend.requestDevices();
+        if (n) await poll();
+      } catch (e) {
+        toast(errText(e), "error");
+      }
+      return;
+    }
     case "stage":
       s.dpi.active = +el.dataset.i;
       touch(p); applyDpi(dev, s);
@@ -1011,6 +1075,8 @@ async function onClick(e) {
       saveLib();
       return rerender();
     }
+    case "diagnose":
+      return runDiagnostics();
     case "copy-code":
       await navigator.clipboard.writeText(encodeCode(byId(el.dataset.id)));
       return toast(t("codeCopied"));
@@ -1049,6 +1115,8 @@ async function onClick(e) {
         } catch (err) {
           toast(String(err), "error");
         }
+      } else {
+        $("[data-import-input]")?.click();
       }
       return;
     case "paste": {
@@ -1137,7 +1205,7 @@ function onInput(e) {
   }
 }
 
-function onChange(e) {
+async function onChange(e) {
   const el = e.target;
   const act = el.dataset.act;
   const st = state.lib.settings;
@@ -1186,6 +1254,10 @@ function onChange(e) {
     poll();
   } else if (el.matches("[data-photo-input]") && dev) {
     loadPhoto(el.files[0], dev);
+  } else if (el.matches("[data-import-input]")) {
+    const texts = await Promise.all([...el.files].map((f) => f.text()));
+    el.value = "";
+    if (texts.length) addImported(texts);
   } else if (el.dataset.dpiNum) {
     onInput(e);
   }
@@ -1197,6 +1269,18 @@ async function boot() {
   await loadLib();
   setLang(state.lib.settings.lang);
   applyTheme();
+
+  if (!tauri) {
+    document.body.classList.add("web");
+    try {
+      webBackend = await import("./webhid/backend.js");
+      $("#title-status").textContent = webBackend.supported ? "WEBHID" : "WEB";
+      window.osynHidDiag = webBackend.diag;
+    } catch (e) {
+      console.warn("WebHID backend unavailable", e);
+      webBackend = null;
+    }
+  }
 
   document.addEventListener("click", onClick);
   document.addEventListener("keydown", (e) => {

@@ -9,11 +9,14 @@
     "dev": "tauri dev",
     "build": "tauri build",
     "test:ui": "node scripts/test-ui.mjs",
-    "icons": "node scripts/render-icon.mjs && tauri icon assets/icon-1024.png"
+    "icons": "node scripts/render-icon.mjs && tauri icon assets/icon-1024.png",
+    "web": "node scripts/serve.mjs",
+    "test:webhid": "node scripts/test-webhid.mjs"
   },
   "devDependencies": {
     "@resvg/resvg-js": "^2.6.2",
     "@tauri-apps/cli": "^2",
     "playwright": "^1.64.1"
-  }
+  },
+  "type": "module"
 }

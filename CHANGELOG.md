@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Add a browser build that talks to Razer devices over WebHID. Run `npm run web` and open it in Chrome or Edge; presets and photos live in `localStorage`.
+- Add `npm run test:webhid` for the browser protocol port.
+- Publish the web build to GitHub Pages from `main`.
+
 ## 0.1.1
 
 - Keep preset names and save, copy and export actions inside the device header, including long names.

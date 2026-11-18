@@ -41,6 +41,7 @@ Open Synapse — это одно маленькое приложение (~10 М
 - **Настройки из памяти устройства** — DPI-уровни, частота опроса и время сна, сохранённые в мыши другой программой, считываются при первом подключении.
 - **Русский и английский интерфейс**, шрифты Unbounded, Inter, JetBrains Mono и Playfair Display.
 - **Демо-режим** — осмотреться без железа.
+- **Веб-версия** — та же страница открывается в Chrome или Edge и управляет устройствами через WebHID.
 
 ## Поддерживаемые устройства
 
@@ -73,6 +74,15 @@ npm run build    # установщик в src-tauri/target/release/bundle
 
 Тесты протокола: `cargo test --manifest-path src-tauri/Cargo.toml`.
 
+Веб-версия: [fschmid1.github.io/open-synapse](https://fschmid1.github.io/open-synapse/) (нужен Chrome или Edge с WebHID).
+
+```bash
+npm run web        # http://127.0.0.1:4173
+npm run test:webhid
+```
+
+Та же страница публикуется на GitHub Pages из ветки `main`. Управление железом идёт через WebHID, поэтому нужен Chromium-браузер и HTTPS либо `localhost`; в Firefox и Safari доступен демо-режим. Пресеты в веб-версии хранятся в `localStorage`. В Linux браузеру нужен доступ к HID-устройству: если подключение падает, добавьте udev-правило для `1532` (или установите `chrome-udev`).
+
 Проверка интерфейса (два языка, семь тем, четыре размера окна, пресеты и прокрутка):
 
 ```bash
@@ -89,6 +99,7 @@ src/                 интерфейс: HTML + CSS + JS без сборщика
   app.js             состояние, пресеты, горячее подключение
   art.js             SVG-иллюстрации устройств с зонами подсветки
   i18n.js            переводы
+  webhid/            браузерный бэкенд: протокол, база устройств, WebHID
 src-tauri/src/
   main.rs            команды Tauri, хранилище, импорт/экспорт
   razer/protocol.rs  90-байтовые HID feature-репорты Razer
@@ -98,7 +109,7 @@ src-tauri/src/
 
 Протокол — это 90-байтовые feature-репорты HID (класс команды, ID, аргументы, XOR-контрольная сумма), задокументированные проектом [OpenRazer](https://github.com/openrazer/openrazer). Для каждого устройства приложение перебирает его HID-интерфейсы и transaction ID, пока устройство не ответит, и запоминает рабочую пару.
 
-Пресеты хранятся в `library.json` в папке настроек приложения (`%APPDATA%\dev.opensynapse.app` на Windows).
+Пресеты хранятся в `library.json` в папке настроек приложения (`%APPDATA%\dev.opensynapse.app` на Windows), а в веб-версии — в `localStorage` браузера.
 
 ### Формат пресета
 
@@ -148,6 +159,9 @@ Open Synapse is a tiny (~10 MB) Rust + Tauri app that configures Razer devices w
 - Battery, sleep timer and low-battery threshold for wireless devices
 - **Portable presets**: apply any preset to any device, export `.osp` files or share `OSP1.…` codes
 - Auto-apply on connect, hot-plug, Russian and English UI
+- Browser build with WebHID hardware control (Chrome/Edge): `npm run web`
+
+The web build lives at [fschmid1.github.io/open-synapse](https://fschmid1.github.io/open-synapse/) and uses WebHID, so hardware control needs Chrome or Edge and HTTPS or `localhost`; other browsers can still use demo mode. The GitHub Pages workflow publishes the same `src/` folder from `main`.
 
 Build: `npm install && npm run build`. Devices are listed in `src-tauri/src/razer/models.rs` — PRs welcome.
 Not affiliated with Razer Inc. MIT licensed.
