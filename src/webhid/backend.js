@@ -328,6 +328,49 @@ export async function requestDevices() {
   return devices.length;
 }
 
+/**
+ * Revokes this page's access to every interface of a device and closes it.
+ * Uses HIDDevice.forget(), so it drops out of getDevices() and has to be
+ * picked again with "Connect device".
+ */
+async function revoke(pid) {
+  const devices = (await grantedDevices()).filter((d) => d.productId === pid);
+  links.delete(pid);
+  vendor.delete(pid);
+  probeFailures.delete(pid);
+  probeErrors.delete(pid);
+
+  for (const device of devices) {
+    try {
+      if (device.opened) await device.close();
+    } catch {
+      /* already gone */
+    }
+    if (typeof device.forget !== "function") {
+      throw new Error("this browser cannot revoke device access; remove the device in the site's HID permissions");
+    }
+    try {
+      await device.forget();
+    } catch (e) {
+      // Another interface of the same device may already be forgotten.
+      if (!e || e.name !== "NotFoundError") throw e;
+    }
+  }
+}
+
+/** Disconnects one device: closes it and revokes the browser permission. */
+export async function disconnect(key) {
+  if (!supported) throw new Error("WebHID is not available in this browser");
+  await revoke(pidOf(key));
+}
+
+/** Disconnects every device this page has access to. */
+export async function disconnectAll() {
+  if (!supported) throw new Error("WebHID is not available in this browser");
+  const pids = new Set((await grantedDevices()).map((d) => d.productId));
+  for (const pid of pids) await revoke(pid);
+}
+
 if (supported) {
   navigator.hid.addEventListener("disconnect", (e) => {
     for (const [pid, link] of links) {
@@ -629,6 +672,10 @@ export async function invoke(cmd, a = {}) {
   switch (cmd) {
     case "list_devices":
       return refresh();
+    case "disconnect_device":
+      return disconnect(a.key);
+    case "disconnect_all_devices":
+      return disconnectAll();
     case "device_state":
       return deviceState(a.key);
     case "set_dpi":

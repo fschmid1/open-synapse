@@ -22,6 +22,8 @@ try {
   const errors = [];
   page.on('pageerror', e => errors.push(e.message));
   await page.goto(`http://127.0.0.1:${server.address().port}`);
+  await page.locator('.empty').waitFor();
+  await page.locator('[data-act="demo-on"]').click();
   await page.locator('.hero').waitFor();
   async function fit(label) {
     await page.evaluate(() => document.fonts.ready);

@@ -37,7 +37,7 @@ Open Synapse is one small (~10 MB) Rust app that opens instantly and simply conf
 - **Settings from device memory** — DPI stages, polling rate and sleep time saved to the mouse by another program are read on first connection.
 - **English interface**, fonts Unbounded, Inter, JetBrains Mono and Playfair Display.
 - **Demo mode** — look around without hardware.
-- **Web version** — the same page opens in Chrome or Edge and controls devices through WebHID.
+- **Web version** — the same page opens in Chrome or Edge and controls devices through WebHID. Disconnect a device to revoke the page's access until you connect it again.
 
 ## Supported devices
 
@@ -78,7 +78,7 @@ npm run build:web  # static build in dist/, published to GitHub Pages
 npm run test:webhid
 ```
 
-The same page is published to GitHub Pages from the `main` branch. Hardware control goes through WebHID, so a Chromium browser and HTTPS or `localhost` are required; demo mode is available in Firefox and Safari. Presets in the web version are stored in `localStorage`. On Linux the browser needs access to the HID device: if connecting fails, add the udev rule for `1532` (or install `chrome-udev`).
+The same page is published to GitHub Pages from the `main` branch. Hardware control goes through WebHID, so a Chromium browser and HTTPS or `localhost` are required; demo mode is available in Firefox and Safari. Presets in the web version are stored in `localStorage`. Use **Disconnect** on a device, or **Disconnect all** in Settings, to revoke the page's WebHID access. On Linux the browser needs access to the HID device: if connecting fails, add the udev rule for `1532` (or install `chrome-udev`).
 
 Interface check (seven themes, four window sizes, presets and scrolling):
 

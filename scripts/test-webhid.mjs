@@ -56,6 +56,7 @@ console.log('webhid tests passed');
 // A fake HID stack exercises the browser backend without hardware.
 const mouseCalls = [];
 const headsetOutputs = [];
+const granted = [];
 
 class FakeDevice {
   constructor(pid, name) {
@@ -68,6 +69,11 @@ class FakeDevice {
   }
   async open() { this.opened = true; }
   async close() { this.opened = false; }
+  async forget() {
+    const i = granted.indexOf(this);
+    if (i < 0) throw Object.assign(new Error("not granted"), { name: "NotFoundError" });
+    granted.splice(i, 1);
+  }
   async sendFeatureReport(id, data) {
     assert.equal(id, 0);
     const req = new Uint8Array(data);
@@ -119,12 +125,13 @@ function respond(pid, req, res) {
 const mouse = new FakeDevice(0x00c1, "Razer Viper V3 Pro");
 const keyboard = new FakeDevice(0x0287, "Razer BlackWidow V4");
 const headset = new FakeDevice(0x0555, "Razer BlackShark V2 Pro");
+granted.push(mouse, keyboard, headset);
 Object.defineProperty(globalThis, "navigator", {
   configurable: true,
   value: {
     hid: {
-      getDevices: async () => [mouse, keyboard, headset],
-      requestDevice: async () => [mouse, keyboard, headset],
+      getDevices: async () => [...granted],
+      requestDevice: async () => [...granted],
       addEventListener() {},
       removeEventListener() {},
     },
@@ -214,5 +221,15 @@ assert.equal(headsetOutputs.length, 1);
 assert.equal(headsetOutputs[0][0], 2);
 assert.equal(headsetOutputs[0][1].length, 63);
 assert.equal(headsetOutputs[0][1][12], 0x09);
+
+// Disconnecting closes the device and revokes the browser permission.
+await backend.invoke("disconnect_device", { key: "1532:0287" });
+assert.equal(keyboard.opened, false);
+assert.equal((await backend.invoke("list_devices")).some((d) => d.pid === 0x0287), false);
+assert.equal(granted.length, 2);
+
+await backend.invoke("disconnect_all_devices");
+assert.equal((await backend.invoke("list_devices")).length, 0);
+assert.deepEqual(granted, []);
 
 console.log("webhid backend tests passed");

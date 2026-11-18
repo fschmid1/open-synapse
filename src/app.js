@@ -565,6 +565,9 @@ function deviceView(dev) {
       ? `<button class="chip warn" data-act="diagnose" title="${esc(dev.error || t("diagnoseHint"))}">${esc(t(dev.asleep ? "sleepingHint" : "asleep"))}</button>`
       : "",
     !dev.verified ? `<span class="chip warn" title="${esc(t("unverifiedHint"))}">${esc(t("unverified"))}</span>` : "",
+    webMode() && !dev.demo
+      ? `<button class="chip danger" data-act="disconnect" title="${esc(t("disconnectHint"))}">${I.x}${esc(t("disconnect"))}</button>`
+      : "",
   ].join("");
 
   const options = state.lib.presets
@@ -873,7 +876,10 @@ function settingsView() {
         <div class="setting"><div><div class="t">${esc(t("demoMode"))}</div><div class="d">${esc(t("demoModeHint"))}</div></div>
           <label class="switch"><input type="checkbox" data-act="demo" ${st.demo ? "checked" : ""}><span></span></label></div>
         ${webMode() ? `<div class="setting"><div><div class="t">${esc(t("browserAccess"))}</div><div class="d">${esc(webBackend.supported ? t("browserAccessHint") : t("noWebHid"))}</div></div>
-          ${webBackend.supported ? `<button class="btn" data-act="connect">${esc(t("connectDevice"))}</button>` : ""}</div>` : ""}
+          ${webBackend.supported ? `<div class="row" style="gap:8px;margin:0">
+            <button class="btn" data-act="connect">${esc(t("connectDevice"))}</button>
+            ${state.devices.some((d) => !d.demo) ? `<button class="btn danger" data-act="disconnect-all">${esc(t("disconnectAll"))}</button>` : ""}
+          </div>` : ""}</div>` : ""}
       </div>
       <div class="card">${head(3, t("about"), "v0.1.1 · MIT")}
         <div class="about"><img src="logo.svg" alt=""><div><b>Open Synapse</b><p class="muted" style="margin:6px 0 0">${esc(t("aboutText"))}</p>
@@ -1001,6 +1007,49 @@ async function onClick(e) {
       } catch (e) {
         toast(errText(e), "error");
       }
+      return;
+    }
+    case "disconnect": {
+      if (!webMode() || !dev || dev.demo) return;
+      const ok = await modal({
+        title: t("disconnect"),
+        text: t("disconnectConfirm", { device: dev.name }),
+        actions: [{ label: t("cancel"), kind: "ghost" }, { label: t("disconnect"), kind: "primary", value: () => true }],
+      });
+      if (!ok) return;
+      try {
+        await call("disconnect_device", { key: dev.key });
+        state.seen.delete(dev.key);
+        toast(t("disconnected", { device: dev.name }));
+      } catch (e) {
+        return toast(errText(e), "error");
+      }
+      await poll();
+      if (state.view.type === "device" && !state.devices.some((d) => d.key === dev.key)) {
+        state.view.key = state.devices[0]?.key ?? null;
+        render(true);
+      }
+      return;
+    }
+    case "disconnect-all": {
+      const ok = await modal({
+        title: t("disconnectAll"),
+        text: t("disconnectAllConfirm"),
+        actions: [{ label: t("cancel"), kind: "ghost" }, { label: t("disconnectAll"), kind: "primary", value: () => true }],
+      });
+      if (!ok) return;
+      try {
+        await call("disconnect_all_devices");
+        state.seen.clear();
+        toast(t("allDisconnected"));
+      } catch (e) {
+        return toast(errText(e), "error");
+      }
+      await poll();
+      if (state.view.type === "device" && !state.devices.some((d) => d.key === state.view.key)) {
+        state.view.key = state.devices[0]?.key ?? null;
+      }
+      render(true);
       return;
     }
     case "stage":
