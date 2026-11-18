@@ -27,7 +27,7 @@ Open Synapse is one small (~10 MB) Rust app that opens instantly and simply conf
 - **Lighting** — static color, breathing (1 or 2 colors), spectrum, wave, reactive, starlight; brightness, speed, direction, individual zones (logo, wheel, etc.) with a live preview.
 - **Power** — charge and charging status, time to sleep, low-battery threshold, dongle indicator mode.
 - **Buttons** — wheel and side buttons to any mouse function or key (with Ctrl/Shift/Alt/Win). Left and right are not remappable so a preset never leaves you without a click.
-- **Keys** — on the Reclusa X Mini 65% every listed key can send another key (with Ctrl/Shift/Alt/Win), a mouse button or nothing. Every write is read back. Macros are not available yet; their program format is undocumented.
+- **Keys** — remap a key to another key (with Ctrl/Shift/Alt/Win), a mouse button or nothing. Keyboards whose firmware implements the documented `02/8D` command get device-side mappings, with every write read back. For keyboards that reject it (the Reclusa X Mini 65%), the Windows desktop app offers an opt-in **software remap** that works while Open Synapse is running. It is clearly marked as software-only, has a tray indicator and stops instantly with Ctrl+Alt+Shift+Esc. Macros are not available yet; their program format is undocumented.
 - **Calibration** — lift-off distance (low/medium/high), dynamic sensitivity with "classic", "natural", "jump" and custom curves.
 - **Sleeping mouse** — if a wireless mouse falls asleep, the app notices and does not mistake the dongle for the mouse.
 - **Portable presets** — a preset is not tied to a model: apply one mouse's settings to another, export to an `.osp` file or share an `OSP1.…` code in chat. Unsupported parameters are skipped, DPI is clamped to the sensor maximum.
@@ -99,10 +99,11 @@ src/                 interface: HTML + CSS + JS with no bundler
   i18n.js            translations
   webhid/            browser backend: protocol, device database, WebHID
 src-tauri/src/
-  main.rs            Tauri commands, storage, import/export
+  main.rs            Tauri commands, storage, import/export, tray
   razer/protocol.rs  90-byte Razer HID feature reports
   razer/models.rs    device database
   razer/mod.rs       control-interface discovery and commands
+  remap.rs           Windows software remap: WH_KEYBOARD_LL hook and mapping engine
 ```
 
 The protocol uses 90-byte HID feature reports (command class, ID, arguments, XOR checksum), documented by the [OpenRazer](https://github.com/openrazer/openrazer) project. For each device, the app iterates over its HID interfaces and transaction IDs until the device responds, then remembers the working pair.
@@ -130,7 +131,7 @@ Presets are stored in `library.json` in the app's settings folder (`%APPDATA%\de
 
 Everything in the "Buttons", "Calibration" and "Dongle LED" sections was captured from the official app's USB traffic (USBPcap) on the **Viper V3 Pro** and re-checked on the mouse itself: the value is written, read back and returned. For other models these features are currently disabled. To add a model, do the same: record the traffic and attach the decode to a pull request.
 
-Keyboard key remapping uses the documented `02/0D` (set) and `02/8D` (get) keyboard commands and is enabled only for the **Reclusa X Mini 65%** (68 keys, standard layer). The Reclusa itself has not been captured yet, so treat the first write as a test: every mapping is read back and a mismatch is reported instead of being hidden. Macros (function ids 3/4/5/15) are not implemented; an existing mapping this app does not understand is shown as "Macro / other" and is left untouched. On the standard layer, `s.keys` in a preset holds only the keys that differ from the factory mapping, keyed by Razer AT-101 key id (not USB HID usage):
+Keyboard key remapping uses the documented `02/0D` (set) and `02/8D` (get) commands on the standard layer, with the 68-key table in `src-tauri/src/razer/models.rs`. It is enabled per model with `KEYMAP` only after its firmware answers `02/8D`. A **Reclusa X Mini 65%** was tested and answers status `0x05` (not supported) to both commands on its control interface for every profile and layer. Synapse remaps this model in software: its device model reports `isOBMDevice:false`, and mappings live in its local mapping engine rather than in the keyboard. Open Synapse therefore detects the rejected probe and hides the device-side section; the Windows desktop app offers the **software remap** described below instead. Once a model does answer, every write is read back and a mismatch is reported instead of being hidden. Macros (function ids 3/4/5/15) are not implemented; an existing mapping this app does not understand is shown as "Macro / other" and is left untouched. On the standard layer, `s.keys` in a preset holds only the keys that differ from the factory mapping, keyed by Razer AT-101 key id (not USB HID usage):
 
 ```json
 "keys": {
@@ -142,12 +143,39 @@ Keyboard key remapping uses the documented `02/0D` (set) and `02/8D` (get) keybo
 
 That makes Caps Lock act as Left Ctrl, Left Ctrl act as the back mouse button and A do nothing. `usage` is the HID usage for ordinary keys; modifier keys use a zero usage and set the matching bit in `modifiers` (1 LCtrl, 2 LShift, 4 LAlt, 8 LWin, 16 RCtrl, 32 RShift, 64 RAlt, 128 RWin).
 
+Software mappings are deliberately stored in a different field, so `keys` always means "stored on the keyboard". The same key ids and target shapes are used, plus an opt-in switch:
+
+```json
+"softwareEnabled": true,
+"softwareKeys": {
+  "30": { "kind": "key", "modifiers": 1, "usage": 0 }
+}
+```
+
+### Software key remapping (Windows)
+
+The Windows desktop app can remap a key even when the keyboard does not implement the on-device key-map command. Open the keyboard's **Keys** tab: when the firmware rejects `02/8D`, the tab shows **Software remap** instead of the device-side table. The feature is off until you enable the switch, and it is stored per preset.
+
+How it works: a dedicated thread installs `SetWindowsHookExW(WH_KEYBOARD_LL)` and runs a `GetMessage` loop. The hook swallows the original key and injects the replacement with `SendInput`. Injected events carry a unique `dwExtraInfo` marker and are ignored, so a remap can never loop. Key-down/key-up pairs are tracked, target modifiers are reference counted, and a modifier that is already physically held is not pressed twice.
+
+- **Works only while Open Synapse runs.** The mapping is not written to the keyboard. Closing the app removes the hook, and the keyboard returns to its factory behaviour.
+- **Global scope (v1).** The low-level hook sees every keyboard, so the mapping applies to all keyboards while enabled, not only to the selected device.
+- **Not available in the BIOS, on another computer or OS, on the secure desktop (UAC, Ctrl+Alt+Del), or in elevated apps unless Open Synapse is elevated.** Windows blocks injected input from a lower integrity level to a higher one (UIPI). Ctrl+Alt+Del is a Secure Attention Sequence and cannot be intercepted by any user-mode hook.
+- **Games and anti-cheat.** Some games read Raw Input directly or block injected input; some anti-virus/EDR products flag `WH_KEYBOARD_LL` hooks. If the hook cannot be installed, the enable call returns an error and the UI reports it instead of failing silently.
+- **Instant off.** Press **Ctrl+Alt+Shift+Esc** or use **Disable software remapping** in the tray menu. The panic shortcut is checked before any remap lookup, so it also works when Esc or the modifier keys are remapped. It releases every key the hook is holding before it stops.
+- **One keyboard at a time.** Enabling the feature on another keyboard replaces the active mapping set.
+- **Imported presets** keep their software mappings but arrive with the switch off; a shared preset never installs a global hook by itself.
+
+The manual hardware checklist for the Reclusa X Mini 65% is in [docs/software-remap-checklist.md](docs/software-remap-checklist.md).
+
 Tests on real hardware are marked `#[ignore]` and run explicitly:
 
 ```bash
 cargo test --manifest-path src-tauri/Cargo.toml probe_hardware -- --ignored --nocapture
 cargo test --manifest-path src-tauri/Cargo.toml hardware_keys -- --ignored --nocapture
 ```
+
+The normal `cargo test` run also exercises the software remap engine without hardware: modifier masks, key-down/up pairing, auto-repeat, shared modifiers and the injected-event loop guard.
 
 ## Contributing
 

@@ -16,6 +16,9 @@ struct Link {
     firmware: Option<String>,
     serial: Option<String>,
     asleep_at_probe: bool,
+    /// cleared when the keyboard rejects the key-map command, so a model or
+    /// firmware that does not implement it never offers the section
+    keymap: bool,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -37,6 +40,9 @@ pub struct Caps {
     pub dynamic_sensitivity: bool,
     pub remap: bool,
     pub keymap: bool,
+    /// Windows software remap fallback for keyboards whose firmware rejects
+    /// the on-device key-map commands (the Reclusa X Mini 65%).
+    pub software: bool,
     pub eq: bool,
     pub lighting: bool,
     pub brightness: bool,
@@ -188,6 +194,7 @@ fn caps_of(m: &Model) -> Caps {
         dynamic_sensitivity: has(DYNSENS),
         remap: has(REMAP),
         keymap: has(KEYMAP),
+        software: cfg!(windows) && m.kind == Kind::Keyboard,
         eq: has(HEADSET_EQ),
         lighting: has(LIGHT),
         brightness: has(BRIGHT),
@@ -288,6 +295,10 @@ impl Manager {
             }
             let asleep = model.flags & RECEIVER != 0 && self.links.get(&pid).is_some_and(|l| self.is_asleep(l));
             let link = self.links.get(&pid);
+            let mut caps = caps_of(&model);
+            if link.is_some_and(|l| !l.keymap) {
+                caps.keymap = false;
+            }
             out.push(DeviceView {
                 key: key_of(pid),
                 pid,
@@ -300,7 +311,7 @@ impl Manager {
                 asleep,
                 firmware: link.and_then(|l| l.firmware.clone()),
                 serial: link.and_then(|l| l.serial.clone()),
-                caps: caps_of(&model),
+                caps,
             });
         }
         out.sort_by_key(|d| (d.kind as u8, d.name.clone()));
@@ -333,7 +344,7 @@ impl Manager {
                     let serial = protocol::transfer(&dev, &protocol::get_serial(tx))
                         .ok()
                         .and_then(|r| serial_of(&r));
-                    let mut link = Link { path: path.clone(), tx, firmware: Some(firmware_of(&fw)), serial, asleep_at_probe: false };
+                    let mut link = Link { path: path.clone(), tx, firmware: Some(firmware_of(&fw)), serial, asleep_at_probe: false, keymap: true };
                     if model.flags & RECEIVER != 0 {
                         link.asleep_at_probe = match protocol::transfer(&dev, &protocol::get_link(tx)) {
                             Ok(r) => r.args()[0] == 0x02 && r.args()[1] == 0x00,
@@ -364,7 +375,8 @@ impl Manager {
     }
 
     pub fn state(&mut self, key: &str) -> Result<DeviceState, String> {
-        if lookup(pid_of(key)?, None).flags & HEADSET_EQ != 0 {
+        let pid = pid_of(key)?;
+        if lookup(pid, None).flags & HEADSET_EQ != 0 {
             return Ok(DeviceState::default());
         }
         let (dev, tx, model) = self.open(key)?;
@@ -440,19 +452,34 @@ impl Manager {
                 }
             }
         }
-        if caps.keymap {
+        if caps.keymap && self.links.get(&pid).is_some_and(|l| l.keymap) {
             // Probe one key first: an unsupported command would otherwise cost
-            // one failed transfer for every key in the table.
-            let probe = KEYMAP_KEYS.first().map(|key| {
-                q(protocol::get_key(tx, protocol::KEYMAP_PROFILE, key.id, protocol::KEYMAP_LAYER_STANDARD))
-            });
-            if probe.flatten().is_some() {
-                for key in KEYMAP_KEYS {
-                    if let Some(r) = q(protocol::get_key(tx, protocol::KEYMAP_PROFILE, key.id, protocol::KEYMAP_LAYER_STANDARD)) {
-                        if let Some(entry) = key_entry(key.id, &r) {
+            // one failed transfer for every key in the table. A firmware that
+            // says "not supported" loses the capability for this session.
+            if let Some(first) = KEYMAP_KEYS.first() {
+                let probe = protocol::transfer(
+                    &dev,
+                    &protocol::get_key(tx, protocol::KEYMAP_PROFILE, first.id, protocol::KEYMAP_LAYER_STANDARD),
+                );
+                match probe {
+                    Ok(r) => {
+                        if let Some(entry) = key_entry(first.id, &r) {
                             s.keys.push(entry);
                         }
+                        for key in &KEYMAP_KEYS[1..] {
+                            if let Some(r) = q(protocol::get_key(tx, protocol::KEYMAP_PROFILE, key.id, protocol::KEYMAP_LAYER_STANDARD)) {
+                                if let Some(entry) = key_entry(key.id, &r) {
+                                    s.keys.push(entry);
+                                }
+                            }
+                        }
                     }
+                    Err(ProtoError::Unsupported) => {
+                        if let Some(link) = self.links.get_mut(&pid) {
+                            link.keymap = false;
+                        }
+                    }
+                    Err(_) => {}
                 }
             }
         }
@@ -530,7 +557,8 @@ impl Manager {
     /// Maps a keyboard key on the standard layer and reads it back.
     pub fn set_key(&mut self, key: &str, key_id: u8, map: &KeyMap) -> Result<(), String> {
         let (dev, tx, model) = self.open(key)?;
-        if model.flags & KEYMAP == 0 {
+        let pid = pid_of(key)?;
+        if model.flags & KEYMAP == 0 || self.links.get(&pid).is_some_and(|l| !l.keymap) {
             return Err("key remapping is not supported on this device".into());
         }
         if key_def(key_id).is_none() {
@@ -556,12 +584,28 @@ impl Manager {
             }
             KeyMap::Other { .. } => return Err("unknown key mapping".into()),
         };
-        protocol::transfer(&dev, &report).map_err(|e| e.to_string())?;
-        let read = protocol::transfer(
+        if let Err(e) = protocol::transfer(&dev, &report) {
+            if matches!(e, ProtoError::Unsupported) {
+                if let Some(link) = self.links.get_mut(&pid) {
+                    link.keymap = false;
+                }
+            }
+            return Err(e.to_string());
+        }
+        let read = match protocol::transfer(
             &dev,
             &protocol::get_key(tx, protocol::KEYMAP_PROFILE, key_id, protocol::KEYMAP_LAYER_STANDARD),
-        )
-        .map_err(|e| e.to_string())?;
+        ) {
+            Ok(r) => r,
+            Err(e) => {
+                if matches!(e, ProtoError::Unsupported) {
+                    if let Some(link) = self.links.get_mut(&pid) {
+                        link.keymap = false;
+                    }
+                }
+                return Err(e.to_string());
+            }
+        };
         let stored = key_entry(key_id, &read).ok_or("device did not return the key mapping")?;
         if stored.map != *map {
             return Err("device stored a different key mapping".into());
@@ -830,12 +874,15 @@ mod keymap_serde {
 mod hardware_keys {
     use super::*;
 
-    /// Read-only: asks the Reclusa X Mini 65% for every key on the standard layer.
+    /// Read-only: asks a connected keyboard for every key on the standard layer.
+    /// The Reclusa X Mini 65% rejects 02/8D, so no mappings are listed until a
+    /// model whose firmware implements the command is connected.
     #[test]
     #[ignore]
     fn read_key_mappings() {
         let mut m = Manager::new();
         let d = m.refresh().unwrap().into_iter().find(|d| d.pid == 0x02E3 && d.online).expect("connected Reclusa X Mini 65%");
+        println!("keymap advertised: {}", d.caps.keymap);
         let state = m.state(&d.key).unwrap();
         println!("{} keys:", state.keys.len());
         for entry in &state.keys {
@@ -845,12 +892,17 @@ mod hardware_keys {
     }
 
     /// Writes Caps Lock as Left Ctrl, reads it back, then restores the original.
+    /// Does nothing on a firmware that does not implement 02/8D.
     #[test]
     #[ignore]
     fn change_and_restore_key() {
         let mut m = Manager::new();
         let d = m.refresh().unwrap().into_iter().find(|d| d.pid == 0x02E3 && d.online).expect("connected Reclusa X Mini 65%");
-        let original = m.state(&d.key).unwrap().keys.into_iter().find(|k| k.key == 30).expect("Caps Lock mapping").map;
+        let state = m.state(&d.key).unwrap();
+        let Some(original) = state.keys.iter().find(|k| k.key == 30).map(|k| k.map.clone()) else {
+            println!("this keyboard does not answer 02/8D; key remapping is not available");
+            return;
+        };
         println!("original Caps Lock: {:02x?}", original);
         m.set_key(&d.key, 30, &KeyMap::Key { modifiers: 0x01, usage: 0 }).unwrap();
         let changed = m.state(&d.key).unwrap().keys.into_iter().find(|k| k.key == 30).unwrap().map;

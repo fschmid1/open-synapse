@@ -75,17 +75,17 @@ try {
   assert.equal(await page.locator('[data-act="button"][data-b="3"]').inputValue(), '3', 'typing after navigation must not remap');
   await page.locator('.dev-item[data-key="demo:reclusa"]').click();
   await page.locator('[data-tab="keys"]').click();
-  await page.locator('[data-act="key"][data-k="30"]').selectOption('key');
-  assert.equal(await page.locator('[data-act="key-listen"].primary').count(), 1, 'key capture starts');
+  await page.locator('[data-act="soft-key"][data-k="30"]').selectOption('key');
+  assert.equal(await page.locator('[data-act="soft-listen"].primary').count(), 1, 'key capture starts');
   await page.keyboard.press('a');
-  assert.equal(await page.locator('[data-act="key"][data-k="30"]').inputValue(), 'key', 'Caps Lock is remapped');
-  assert.match(await page.locator('[data-act="key"][data-k="30"] option:checked').textContent(), /A/);
-  await page.locator('[data-act="key"][data-k="31"]').selectOption('key');
-  assert.equal(await page.locator('[data-act="key-listen"].primary').count(), 1, 'second key capture starts');
+  assert.equal(await page.locator('[data-act="soft-key"][data-k="30"]').inputValue(), 'key', 'Caps Lock is remapped');
+  assert.match(await page.locator('[data-act="soft-key"][data-k="30"] option:checked').textContent(), /A/);
+  await page.locator('[data-act="soft-key"][data-k="31"]').selectOption('key');
+  assert.equal(await page.locator('[data-act="soft-listen"].primary').count(), 1, 'second key capture starts');
   await page.locator('[data-view="settings"]').click(); await page.keyboard.press('b');
   await page.locator('.dev-item[data-key="demo:reclusa"]').click();
-  assert.equal(await page.locator('[data-act="key-listen"].primary').count(), 0, 'navigation cancels key capture');
-  assert.equal(await page.locator('[data-act="key"][data-k="31"]').inputValue(), '', 'typing after navigation must not remap a key');
+  assert.equal(await page.locator('[data-act="soft-listen"].primary').count(), 0, 'navigation cancels key capture');
+  assert.equal(await page.locator('[data-act="soft-key"][data-k="31"]').inputValue(), '', 'typing after navigation must not remap a key');
   await page.locator('[data-view="library"]').click(); await fit('long name in library');
   const originalCount = await page.locator('.preset').count();
   await page.locator('[data-act="paste"]').click();
@@ -100,7 +100,7 @@ try {
   assert.equal(await page.locator('#dpi-num').textContent(), '35000', 'DPI persists across reload');
   await page.locator('.dev-item[data-key="demo:reclusa"]').click();
   await page.locator('[data-tab="keys"]').click();
-  assert.equal(await page.locator('[data-act="key"][data-k="30"]').inputValue(), 'key', 'key mapping persists across reload');
+  assert.equal(await page.locator('[data-act="soft-key"][data-k="30"]').inputValue(), 'key', 'key mapping persists across reload');
   assert.deepEqual(errors, [], 'no uncaught JavaScript errors');
   console.log(`${count} layout checks passed; navigation, persistence, valid/invalid imports and key remapping passed.`);
 } finally {

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import * as P from '../src/webhid/protocol.js';
-import { lookup, capsOf, MODELS, KEYMAP_KEYS, keyDef } from '../src/webhid/models.js';
+import { lookup, capsOf, MODELS, KEYMAP, KEYMAP_KEYS, keyDef } from '../src/webhid/models.js';
 
 // CRC and layout of a DPI write
 const dpi = P.setDpi(0x1f, 800, 800);
@@ -55,7 +55,11 @@ const unknown = lookup(0x1abc, 'Razer Mystery');
 assert.equal(unknown.kind, 'other');
 assert.equal(unknown.name, 'Mystery');
 assert.equal(MODELS.filter((m) => m.pid === 0x02e3)[0].name, 'Reclusa X Mini 65%');
-assert.equal(capsOf(lookup(0x02e3)).keymap, true);
+// The Reclusa X Mini 65% firmware rejects 02/0D and 02/8D (status 0x05), so it
+// must not advertise key remapping.
+assert.equal(capsOf(lookup(0x02e3)).keymap, false);
+// Software remapping needs a system-wide hook, which WebHID cannot install.
+assert.equal(capsOf(lookup(0x02e3)).software, false);
 assert.equal(KEYMAP_KEYS.length, 68);
 
 console.log('webhid tests passed');
@@ -74,6 +78,8 @@ class FakeDevice {
     this.opened = false;
     this.pending = new Uint8Array(90);
     this.keymaps = new Map();
+    // A model that advertises key remapping but whose firmware says "not supported".
+    this.rejectsKeymap = pid === 0x9999;
   }
   async open() { this.opened = true; }
   async close() { this.opened = false; }
@@ -91,6 +97,12 @@ class FakeDevice {
     res.set(req);
     res[0] = P.STATUS_OK;
     if (req[6] === 0x02 && req[7] === 0x0d) {
+      if (this.rejectsKeymap) {
+        res[0] = P.STATUS_UNSUPPORTED;
+        respond(this, req, res);
+        this.pending = res;
+        return;
+      }
       const len = req[12];
       this.keymaps.set(req[9], { fn: req[11], data: [...req.slice(13, 13 + len)] });
     }
@@ -131,6 +143,10 @@ function respond(device, req, res) {
     case "11:145": a(1, 0); break; // classic curve
     case "2:140": a(1, req[9]); a(3, 1); a(5, req[9]); break; // buttons echo
     case "2:141": { // key map echo: [profile, key, layer, fn, len, data…]
+      if (device.rejectsKeymap) {
+        res[0] = P.STATUS_UNSUPPORTED;
+        break;
+      }
       const key = req[9];
       const stored = device.keymaps.get(key);
       const def = keyDef(key);
@@ -168,7 +184,7 @@ assert.equal(backend.supported, true);
 
 const listed = await backend.invoke("list_devices");
 assert.deepEqual(listed.map((d) => d.pid).sort((a, b) => a - b), [0x00c1, 0x0287, 0x02e3, 0x0555]);
-assert.equal(listed.find((d) => d.pid === 0x02e3).caps.keymap, true);
+assert.equal(listed.find((d) => d.pid === 0x02e3).caps.keymap, false);
 const viper = listed.find((d) => d.pid === 0x00c1);
 assert.equal(viper.name, "Viper V3 Pro");
 assert.equal(viper.online, true);
@@ -229,20 +245,14 @@ await backend.invoke("set_button", {
 });
 assert.deepEqual([...last().slice(8, 15)], [0x01, 0x05, 0x00, 0x02, 0x02, 0x02, 0x04]);
 
+// The Reclusa X Mini 65% does not implement 02/0D or 02/8D: the app must not
+// read keys from it or try to write them.
 const ks = await backend.invoke("device_state", { key: "1532:02e3" });
-assert.equal(ks.keys.length, KEYMAP_KEYS.length);
-assert.deepEqual(ks.keys.find((k) => k.key === 31), { key: 31, kind: "key", modifiers: 0, usage: 0x04 });
-assert.deepEqual(ks.keys.find((k) => k.key === 44), { key: 44, kind: "key", modifiers: 2, usage: 0 });
-
-const beforeKey = mouseCalls.length;
-await backend.invoke("set_key", { key: "1532:02e3", id: 58, map: { kind: "key", modifiers: 1, usage: 0 } });
-assert.deepEqual([...mouseCalls[beforeKey].slice(5, 15)], [0x50, 0x02, 0x0d, 0x01, 0x3a, 0x00, 0x02, 0x02, 0x01, 0x00]);
-assert.deepEqual(reclusa.keymaps.get(58), { fn: 2, data: [1, 0] });
-assert.deepEqual([...last().slice(5, 8)], [0x50, 0x02, 0x8d]);
-
-await backend.invoke("set_key", { key: "1532:02e3", id: 31, map: { kind: "off" } });
-assert.deepEqual([...mouseCalls.at(-2).slice(11, 13)], [0x00, 0x00]);
-await assert.rejects(() => backend.invoke("set_key", { key: "1532:02e3", id: 200, map: { kind: "off" } }), /unknown key/);
+assert.deepEqual(ks.keys, []);
+await assert.rejects(
+  () => backend.invoke("set_key", { key: "1532:02e3", id: 58, map: { kind: "key", modifiers: 1, usage: 0 } }),
+  /not supported/,
+);
 
 const beforeCurve = mouseCalls.length;
 await backend.invoke("set_dynamic_sensitivity", { key: "1532:00c1", on: true, curve: 3, customMax: 1.5 });
@@ -272,5 +282,19 @@ assert.equal(granted.length, 3);
 await backend.invoke("disconnect_all_devices");
 assert.equal((await backend.invoke("list_devices")).length, 0);
 assert.deepEqual(granted, []);
+
+// A model that advertises key remapping but rejects 02/8D on the wire loses the
+// capability after the probe, so the interface cannot offer a broken section.
+MODELS.push({ pid: 0x9999, name: "Test Keyboard", kind: "keyboard", tx: 0x1f, max_dpi: 0, flags: KEYMAP, zones: [] });
+granted.push(new FakeDevice(0x9999, "Test Keyboard"));
+const flagged = (await backend.invoke("list_devices")).find((d) => d.pid === 0x9999);
+assert.equal(flagged.caps.keymap, true);
+const rejected = await backend.invoke("device_state", { key: "1532:9999" });
+assert.deepEqual(rejected.keys, []);
+assert.equal((await backend.invoke("list_devices")).find((d) => d.pid === 0x9999).caps.keymap, false);
+await assert.rejects(
+  () => backend.invoke("set_key", { key: "1532:9999", id: 58, map: { kind: "off" } }),
+  /not supported/,
+);
 
 console.log("webhid backend tests passed");

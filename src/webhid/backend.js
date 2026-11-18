@@ -214,7 +214,7 @@ async function probe(model, candidates) {
           } catch {
             /* optional */
           }
-          const link = { device, tx, reportId, firmware: firmwareOf(fw), serial, asleepAtProbe: false };
+          const link = { device, tx, reportId, firmware: firmwareOf(fw), serial, asleepAtProbe: false, keymap: true };
           if ((model.flags & RECEIVER) !== 0) link.asleepAtProbe = await isAsleep(link);
           return link;
         } catch (e) {
@@ -289,6 +289,8 @@ async function doRefresh() {
 
     const link = links.get(pid);
     const asleep = (model.flags & RECEIVER) !== 0 && !!link && (await isAsleep(link));
+    const caps = capsOf(model);
+    if (link && link.keymap === false) caps.keymap = false;
     out.push({
       key: keyOf(pid),
       pid,
@@ -302,7 +304,7 @@ async function doRefresh() {
       firmware: link?.firmware ?? null,
       serial: link?.serial ?? null,
       error: link ? null : (probeErrors.get(pid) || []).join(" | "),
-      caps: capsOf(model),
+      caps,
     });
   }
 
@@ -505,15 +507,24 @@ export async function deviceState(key) {
       else if (a[3] === 0x02) s.buttons.push({ kind: "key", button, modifiers: a[5], usage: a[6] });
     }
   }
-  if (caps.keymap) {
+  if (caps.keymap && link.keymap !== false) {
     // Probe one key first: an unsupported command would otherwise cost one
-    // failed transfer for every key in the table.
-    const probe = KEYMAP_KEYS.length ? await q(P.getKey(link.tx, KEYMAP_KEYS[0].id)) : null;
-    if (probe) {
-      for (const key of KEYMAP_KEYS) {
-        const r = key.id === KEYMAP_KEYS[0].id ? probe : await q(P.getKey(link.tx, key.id));
-        const map = keyMapFrom(key.id, r);
-        if (map) s.keys.push({ key: key.id, ...map });
+    // failed transfer for every key in the table. A firmware that answers
+    // "not supported" loses the capability for this session, so the interface
+    // does not offer a section that cannot work.
+    if (KEYMAP_KEYS.length) {
+      let probe = null;
+      try {
+        probe = await transfer(link.device, P.getKey(link.tx, KEYMAP_KEYS[0].id), link.reportId);
+      } catch (e) {
+        if (msg(e) === "command not supported by this device") link.keymap = false;
+      }
+      if (probe) {
+        for (const key of KEYMAP_KEYS) {
+          const r = key.id === KEYMAP_KEYS[0].id ? probe : await q(P.getKey(link.tx, key.id));
+          const map = keyMapFrom(key.id, r);
+          if (map) s.keys.push({ key: key.id, ...map });
+        }
       }
     }
   }
@@ -620,7 +631,7 @@ export async function setButton(key, map) {
  */
 export async function setKey(key, id, map) {
   const { pid, link } = needLink(key);
-  if ((lookup(pid).flags & KEYMAP) === 0) throw new Error("key remapping is not supported on this device");
+  if ((lookup(pid).flags & KEYMAP) === 0 || link.keymap === false) throw new Error("key remapping is not supported on this device");
   if (!keyDef(id)) throw new Error("unknown key");
 
   let fn;
@@ -641,8 +652,19 @@ export async function setKey(key, id, map) {
     throw new Error("unknown key mapping");
   }
 
-  await transfer(link.device, P.setKey(link.tx, id, fn, data), link.reportId);
-  const read = await transfer(link.device, P.getKey(link.tx, id), link.reportId);
+  try {
+    await transfer(link.device, P.setKey(link.tx, id, fn, data), link.reportId);
+  } catch (e) {
+    if (msg(e) === "command not supported by this device") link.keymap = false;
+    throw e;
+  }
+  let read;
+  try {
+    read = await transfer(link.device, P.getKey(link.tx, id), link.reportId);
+  } catch (e) {
+    if (msg(e) === "command not supported by this device") link.keymap = false;
+    throw e;
+  }
   const stored = keyMapFrom(id, read);
   const ok =
     stored &&

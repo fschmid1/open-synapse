@@ -69,9 +69,9 @@ const DEMO = [
   { key: "demo:basilisk", pid: 0x0099, name: "Basilisk V3", kind: "mouse", firmware: "v1.10",
     caps: { dpi: true, stages: true, max_dpi: 26000, polling: [125, 500, 1000], battery: false, idle: false, lighting: true, brightness: true, effects: EXT_FX, zones: [{ id: 4, name: "logo" }, { id: 1, name: "scroll" }] } },
   { key: "demo:bw", name: "BlackWidow V4", kind: "keyboard", firmware: "v2.01",
-    caps: { dpi: false, stages: false, max_dpi: 0, polling: [], battery: false, idle: false, lighting: true, brightness: true, effects: EXT_FX, zones: [{ id: 5, name: "backlight" }] } },
+    caps: { dpi: false, stages: false, max_dpi: 0, polling: [], battery: false, idle: false, lighting: true, brightness: true, effects: EXT_FX, zones: [{ id: 5, name: "backlight" }], keymap: true, software: false } },
   { key: "demo:reclusa", pid: 0x02e3, name: "Reclusa X Mini 65%", kind: "keyboard", firmware: "v1.00",
-    caps: { dpi: false, stages: false, max_dpi: 0, polling: [], battery: false, idle: false, lighting: true, brightness: true, effects: EXT_FX, zones: [{ id: 5, name: "backlight" }], keymap: true } },
+    caps: { dpi: false, stages: false, max_dpi: 0, polling: [], battery: false, idle: false, lighting: true, brightness: true, effects: EXT_FX, zones: [{ id: 5, name: "backlight" }], keymap: false, software: true } },
   { key: "demo:firefly", pid: 0x0c04, name: "Firefly V2", kind: "mousepad", firmware: "v1.01",
     caps: { dpi: false, stages: false, max_dpi: 0, polling: [], battery: false, idle: false, lighting: true, brightness: true, effects: EXT_FX, zones: [{ id: 0, name: "all" }] } },
 ].map((d) => ({ pid: 0, ...d, wireless: d.wireless ?? false, receiver: false, verified: true, online: true, serial: null, demo: true, ...d }));
@@ -85,6 +85,8 @@ const state = {
   hw: {},
   seen: new Set(),
   keyListen: null,
+  softListen: null,
+  remap: { supported: false, enabled: false, active: false, panic: false, mappings: 0, device: null, error: null },
 };
 
 // ------------------------------------------------------------------ helpers
@@ -215,6 +217,14 @@ function normalize(s = {}) {
     const map = key && normKey(v);
     if (map && !sameKeyMap(map, defaultKeyMap(key))) keys[key.id] = map;
   }
+  // Software remapping is a separate field: `keys` is what the keyboard
+  // stores on-device, `softwareKeys` is what the Windows hook does in memory.
+  const softwareKeys = {};
+  for (const [id, v] of Object.entries(s.softwareKeys || {})) {
+    const key = keyDef(+id);
+    const map = key && normKey(v);
+    if (map && !sameKeyMap(map, defaultKeyMap(key))) softwareKeys[key.id] = map;
+  }
   return {
     dpi: { stages, active: num(s.dpi?.active, 0, 0, stages.length - 1), split: !!s.dpi?.split },
     polling: num(s.polling, 1000, 125, 8000),
@@ -227,6 +237,8 @@ function normalize(s = {}) {
     },
     buttons: Object.fromEntries(REMAPPABLE.map((b) => [b, normButton(b, s.buttons?.[b])])),
     keys,
+    softwareKeys,
+    softwareEnabled: !!s.softwareEnabled,
     dongle: { led: num(s.dongle?.led, 2, 1, 3) },
     headset: { eq: ["game", "movie", "music"].includes(s.headset?.eq) ? s.headset.eq : "game" },
     power: { idle: num(s.power?.idle, 300, 60, 900), lowBattery: num(s.power?.lowBattery, 15, 5, 100) },
@@ -325,13 +337,16 @@ function decodeAny(text) {
     obj = JSON.parse(text);
   }
   if (obj?.format !== "open-synapse/preset" || typeof obj.settings !== "object") throw new Error("format");
+  const settings = normalize(obj.settings);
+  // A shared preset must never install a system-wide hook on its own.
+  settings.softwareEnabled = false;
   return {
     id: uid(),
     name: String(obj.name || "Preset").slice(0, 60),
     kind: icons[obj.kind] ? obj.kind : "mouse",
     created: Date.now(),
     updated: Date.now(),
-    settings: normalize(obj.settings),
+    settings,
   };
 }
 
@@ -425,15 +440,89 @@ function applyKeys(dev, s) {
   }, 250);
 }
 
+// Software remap is a Windows desktop feature: the mappings go to the native
+// hook, not to the keyboard. It is opt-in per preset and has its own field so
+// `keys` keeps meaning "stored on the device".
+function softwareMappings(s) {
+  return Object.entries(s.softwareKeys || {})
+    .map(([id, target]) => {
+      const key = keyDef(+id);
+      if (!key) return null;
+      const source = key.modifier ? { usage: 0, modifier: key.modifier } : { usage: key.usage, modifier: 0 };
+      return { source, target };
+    })
+    .filter(Boolean);
+}
+
+function updateTitleStatus() {
+  if (!tauri) return;
+  const el = $("#title-status");
+  if (!el) return;
+  el.textContent = state.remap.panic ? "REMAP STOPPED" : state.remap.enabled ? "REMAP ON" : "";
+}
+
+function remapStatusText() {
+  if (!state.remap.supported) return t("softwareRemapUnsupported");
+  if (state.remap.error) return t("softwareRemapError", { error: state.remap.error });
+  if (state.remap.panic && !state.remap.enabled) return t("softwareRemapPanicStatus");
+  if (state.remap.enabled) return t("softwareRemapActive", { n: state.remap.mappings });
+  return t("softwareRemapInactive");
+}
+
+async function refreshRemap() {
+  if (!tauri) return;
+  try {
+    state.remap = await call("software_remap_status");
+  } catch {
+    /* older backend or a platform without the command */
+  }
+  updateTitleStatus();
+}
+
+async function syncSoftwareRemap(dev, s, explicit = false) {
+  if (!tauri || !dev.caps.software || dev.demo || !dev.online) return;
+  // A debounced call may run after the keyboard was unplugged.
+  if (!state.devices.some((d) => d.key === dev.key && d.online)) return;
+  try {
+    if (!s.softwareEnabled) {
+      // Only the device that owns the hook may switch it off; connecting or
+      // selecting another keyboard must not stop a running remap.
+      if (explicit && state.remap.enabled && state.remap.device === dev.key) {
+        state.remap = await call("software_remap_disable");
+      }
+    } else {
+      state.remap = await call("software_remap_enable", { mappings: softwareMappings(s), device: dev.key });
+    }
+    updateTitleStatus();
+  } catch (e) {
+    toast(t("deviceError", { device: dev.name, error: errText(e) }), "error");
+    s.softwareEnabled = false;
+    saveLib();
+    try {
+      state.remap = await call("software_remap_status");
+    } catch {
+      /* keep the last known status */
+    }
+    updateTitleStatus();
+    if (state.view.type === "device") rerender();
+  }
+}
+
+function applySoftwareRemap(dev, s, explicit = false) {
+  if (!tauri || !dev.caps.software || dev.demo || !dev.online) return;
+  debounce("soft" + dev.key, () => syncSoftwareRemap(dev, s, explicit), 120);
+}
+
 function applyHeadset(dev, s) {
   if (!dev.caps.eq) return;
   debounce("eq" + dev.key, () => hw(dev, "set_headset_eq", { preset: s.headset.eq }), 200);
 }
 
-function applyAll(dev, p) {
+function applyAll(dev, p, explicitSoftware = false) {
   applyHeadset(dev, p.settings);
   applyButtons(dev, p.settings);
   applyKeys(dev, p.settings);
+  applySoftwareRemap(dev, p.settings, explicitSoftware);
   applyCalib(dev, p.settings);
   applyDpi(dev, p.settings);
   applyPolling(dev, p.settings);
@@ -467,8 +556,19 @@ async function poll() {
     }
   }
   const all = [...list, ...(state.lib.settings.demo ? DEMO : [])];
-  const sig = (ds) => ds.map((d) => `${d.key}:${d.online}:${d.firmware}`).join("|");
+  const sig = (ds) => ds.map((d) => `${d.key}:${d.online}:${d.firmware}:${d.caps.keymap}:${d.caps.software}`).join("|");
   const changed = sig(all) !== sig(state.devices);
+
+  // The hook runs globally, so stop it when its keyboard is gone instead of
+  // leaving stale mappings behind.
+  if (tauri && state.remap.enabled && state.remap.device && !all.some((d) => d.key === state.remap.device && d.online)) {
+    try {
+      state.remap = await call("software_remap_disable");
+      updateTitleStatus();
+    } catch (e) {
+      console.warn(e);
+    }
+  }
 
   for (const d of all) {
     if (d.online && !state.seen.has(d.key)) {
@@ -477,6 +577,7 @@ async function poll() {
       await readHw(d);
       const p = presetFor(d);
       if (bound && state.lib.settings.autoApply) applyAll(d, p);
+      else if (p.settings.softwareEnabled) applySoftwareRemap(d, p.settings);
     }
   }
   for (const k of [...state.seen]) if (!all.some((d) => d.key === k && d.online)) state.seen.delete(k);
@@ -616,15 +717,19 @@ function deviceView(dev) {
     ["lighting", dev.caps.lighting],
     ["power", dev.caps.idle || dev.caps.battery],
     ["buttons", dev.caps.remap],
-    ["keys", dev.caps.keymap],
+    ["keys", dev.caps.keymap || dev.caps.software],
     ["calibration", dev.caps.liftoff],
   ].filter(([, ok]) => ok).map(([id]) => id);
   if (!tabs.includes(state.tab)) state.tab = tabs[0] || "performance";
   const idx = state.devices.indexOf(dev) + 1;
   const conn = dev.receiver ? t("receiver") : dev.wireless ? t("wireless") : t("wired");
 
+  const softActive = state.remap.enabled && state.remap.device === dev.key;
   const chips = [
     dev.demo ? `<span class="chip solid">${esc(t("demo"))}</span>` : "",
+    softActive
+      ? `<button class="chip warn" data-act="soft-off" title="${esc(t("softwareRemapStopHint"))}">${esc(t("softwareRemapOn"))}</button>`
+      : "",
     `<span class="chip">${dev.wireless ? I.wifi : I.cable}${esc(conn)}</span>`,
     dev.firmware ? `<span class="chip">${I.chip}FW ${esc(dev.firmware)}</span>` : "",
     !dev.online
@@ -820,7 +925,7 @@ function buttonsTab(dev, s) {
   </div>`;
 }
 
-function keysTab(dev, s) {
+function deviceKeysTab(dev, s) {
   const NAV = new Set([76, 80, 81, 85, 86, 79, 83, 84, 89]);
   const hwKeys = state.hw[dev.key]?.keys || [];
   const row = (key) => {
@@ -856,6 +961,63 @@ function keysTab(dev, s) {
     <div class="card span-4">${head(2, t("keymapNote"))}<div class="card-body">
       <p class="hint" style="margin:0 0 14px">${esc(t("keymapNoteText"))}</p>
       <p class="hint" style="margin:0">${esc(t("keymapUnverified"))}</p>
+    </div></div>
+  </div>`;
+}
+
+function keysTab(dev, s) {
+  return dev.caps.keymap ? deviceKeysTab(dev, s) : softwareKeysTab(dev, s);
+}
+
+function softwareKeysTab(dev, s) {
+  const NAV = new Set([76, 80, 81, 85, 86, 79, 83, 84, 89]);
+  const enabled = !!s.softwareEnabled;
+  const owner = state.remap.enabled && state.remap.device === dev.key;
+  const other = state.remap.enabled && state.remap.device && state.remap.device !== dev.key;
+  const statusText = state.remap.error
+    ? t("softwareRemapError", { error: state.remap.error })
+    : state.remap.panic && !state.remap.enabled
+      ? t("softwareRemapPanicStatus")
+      : other
+        ? t("softwareRemapOther")
+        : owner
+          ? t("softwareRemapActive", { n: state.remap.mappings })
+          : t("softwareRemapInactive");
+  const row = (key) => {
+    const m = s.softwareKeys[key.id];
+    const def = defaultKeyMap(key);
+    const sel = m ? (m.kind === "off" ? "off" : m.kind === "mouse" ? "m" + m.function : "key") : "";
+    const listening = state.softListen === key.id;
+    return `<div class="setting km-row">
+      <div class="km-key"><div class="t">${esc(key.label)}</div>
+        <div class="d">${m ? esc(mapLabel(m)) : esc(t("keyDefault"))}${m ? ` · ${esc(t("keyDefault"))}: ${esc(keyLabel(def))}` : ""}</div></div>
+      <div class="row" style="gap:8px;margin:0">
+        <select class="select" data-act="soft-key" data-k="${key.id}">
+          <option value="" ${sel === "" ? "selected" : ""}>${esc(t("keyDefault"))}</option>
+          ${MOUSE_FUNCS.map((f) => `<option value="m${f}" ${sel === "m" + f ? "selected" : ""}>${esc(t("fn" + f))}</option>`).join("")}
+          <option value="off" ${sel === "off" ? "selected" : ""}>${esc(t("keyOff"))}</option>
+          <option value="key" ${sel === "key" ? "selected" : ""}>${esc(m?.kind === "key" ? t("fnKey") + ": " + keyLabel(m) : t("fnKey") + "…")}</option>
+        </select>
+        ${sel === "key" || listening ? `<button class="btn ${listening ? "primary" : ""}" data-act="soft-listen" data-k="${key.id}">${esc(listening ? t("pressKey") : t("changeKey"))}</button>` : ""}
+      </div>
+    </div>`;
+  };
+  const group = (title, keys) => `<div class="km-group"><div class="field-label">${esc(title)}</div>${keys.map(row).join("")}</div>`;
+  const toggle = `<label class="row" style="gap:10px;margin:0"><span class="hint">${esc(enabled ? t("softwareRemapOn") : t("softwareRemapOff"))}</span>
+    <span class="switch"><input type="checkbox" data-act="soft-enabled" ${enabled ? "checked" : ""}><span></span></span></label>`;
+  return `<div class="grid">
+    <div class="card span-8">${head(1, t("softwareRemap"), toggle)}<div class="card-body">
+      <p class="hint soft-warning">${esc(t("softwareRemapWarning"))}</p>
+      <div class="km-list ${enabled ? "" : "soft-off"}">
+        ${group(t("keyGroupMain"), KEYMAP_KEYS.filter((k) => !NAV.has(k.id)))}
+        ${group(t("keyGroupNav"), KEYMAP_KEYS.filter((k) => NAV.has(k.id)))}
+      </div>
+    </div></div>
+    <div class="card span-4">${head(2, t("softwareRemapNote"))}<div class="card-body">
+      <p class="hint" style="margin:0 0 14px">${esc(t("softwareRemapScope"))}</p>
+      <p class="hint" style="margin:0 0 14px">${esc(t("softwareRemapPanicHint"))}</p>
+      <p class="hint-mono" style="margin:0 0 14px">${esc(statusText)}</p>
+      ${state.remap.enabled ? `<button class="btn danger" data-act="soft-off">${esc(t("softwareRemapStop"))}</button>` : ""}
     </div></div>
   </div>`;
 }
@@ -988,7 +1150,12 @@ function settingsView() {
             ${state.devices.some((d) => !d.demo) ? `<button class="btn danger" data-act="disconnect-all">${esc(t("disconnectAll"))}</button>` : ""}
           </div>` : ""}</div>` : ""}
       </div>
-      <div class="card">${head(3, t("about"), "v0.1.1 · MIT")}
+      ${state.remap.supported ? `<div class="card">${head(3, t("softwareRemap"))}
+        <div class="setting"><div><div class="t">${esc(t("softwareRemapStatus"))}</div><div class="d">${esc(remapStatusText())}</div></div>
+          ${state.remap.enabled ? `<button class="btn danger" data-act="soft-off">${esc(t("softwareRemapStop"))}</button>` : ""}</div>
+        <div class="setting"><div><div class="d">${esc(t("softwareRemapScope"))}</div><div class="d">${esc(t("softwareRemapPanicHint"))}</div></div></div>
+      </div>` : ""}
+      <div class="card">${head(state.remap.supported ? 4 : 3, t("about"), "v0.1.1 · MIT")}
         <div class="about"><img src="logo.svg" alt=""><div><b>Open Synapse</b><p class="muted" style="margin:6px 0 0">${esc(t("aboutText"))}</p>
         <p class="hint" style="margin:6px 0 0">${esc(t(webMode() ? "dataFolderWeb" : "dataFolder"))}</p></div></div>
       </div>
@@ -1027,7 +1194,7 @@ function loadPhoto(file, dev) {
 async function applyPresetTo(p, dev) {
   state.lib.bindings[dev.key] = p.id;
   saveLib();
-  applyAll(dev, p);
+  applyAll(dev, p, true);
   toast(t("applied", { name: p.name, device: dev.name }));
 }
 
@@ -1080,6 +1247,7 @@ async function onClick(e) {
     state.zone = null;
     state.listen = null;
     state.keyListen = null;
+    state.softListen = null;
     return render(true);
   }
   const nav = e.target.closest(".nav-btn");
@@ -1087,6 +1255,7 @@ async function onClick(e) {
     state.view = { type: nav.dataset.view };
     state.listen = null;
     state.keyListen = null;
+    state.softListen = null;
     return render(true);
   }
   const tab = e.target.closest("[data-tab]");
@@ -1094,6 +1263,7 @@ async function onClick(e) {
     state.tab = tab.dataset.tab;
     state.listen = null;
     state.keyListen = null;
+    state.softListen = null;
     return rerender();
   }
 
@@ -1212,6 +1382,25 @@ async function onClick(e) {
       const id = +el.dataset.k;
       state.keyListen = state.keyListen === id ? null : id;
       state.listen = null;
+      state.softListen = null;
+      return rerender();
+    }
+    case "soft-listen": {
+      const id = +el.dataset.k;
+      state.softListen = state.softListen === id ? null : id;
+      state.keyListen = null;
+      state.listen = null;
+      return rerender();
+    }
+    case "soft-off": {
+      try {
+        state.remap = await call("software_remap_disable");
+      } catch (e) {
+        return toast(errText(e), "error");
+      }
+      for (const q of state.lib.presets) if (q.settings.softwareEnabled) q.settings.softwareEnabled = false;
+      saveLib();
+      updateTitleStatus();
       return rerender();
     }
     case "eq":
@@ -1414,6 +1603,30 @@ async function onChange(e) {
       touch(p); applyKeys(dev, p.settings);
     }
     rerender();
+  } else if (act === "soft-enabled" && dev) {
+    const p = presetFor(dev);
+    p.settings.softwareEnabled = el.checked;
+    if (el.checked) {
+      for (const q of state.lib.presets) if (q !== p) q.settings.softwareEnabled = false;
+    }
+    touch(p);
+    await syncSoftwareRemap(dev, p.settings, true);
+    rerender();
+  } else if (act === "soft-key" && dev) {
+    const p = presetFor(dev);
+    const id = +el.dataset.k;
+    const v = el.value;
+    if (v === "key") {
+      state.softListen = id;
+    } else {
+      state.softListen = null;
+      if (v === "") delete p.settings.softwareKeys[id];
+      else if (v === "off") p.settings.softwareKeys[id] = { kind: "off" };
+      else if (v.startsWith("m")) p.settings.softwareKeys[id] = { kind: "mouse", function: +v.slice(1) };
+      touch(p);
+      applySoftwareRemap(dev, p.settings);
+    }
+    rerender();
   } else if (act === "autoapply") {
     st.autoApply = el.checked;
     saveLib();
@@ -1462,9 +1675,34 @@ async function boot() {
     state.zone = null;
     state.listen = null;
     state.keyListen = null;
+    state.softListen = null;
     render(true);
   });
   document.addEventListener("keydown", (e) => {
+    if (state.softListen != null) {
+      const dev = currentDevice();
+      if (!dev || state.view.type !== "device") { state.softListen = null; return; }
+      e.preventDefault();
+      if (e.code === "Escape") { state.softListen = null; return rerender(); }
+      const id = state.softListen;
+      const key = keyDef(id);
+      if (!key) { state.softListen = null; return rerender(); }
+      let map;
+      if (MOD_BITS[e.code]) {
+        map = { kind: "key", modifiers: MOD_BITS[e.code], usage: 0 };
+      } else {
+        const usage = HID[e.code];
+        if (!usage) return toast(t("keyUnsupported"), "error");
+        map = { kind: "key", modifiers: (e.ctrlKey ? 1 : 0) | (e.shiftKey ? 2 : 0) | (e.altKey ? 4 : 0) | (e.metaKey ? 8 : 0), usage };
+      }
+      const p = presetFor(dev);
+      if (sameKeyMap(map, defaultKeyMap(key))) delete p.settings.softwareKeys[id];
+      else p.settings.softwareKeys[id] = map;
+      state.softListen = null;
+      touch(p);
+      applySoftwareRemap(dev, p.settings);
+      return rerender();
+    }
     if (state.keyListen != null) {
       const dev = currentDevice();
       if (!dev) { state.keyListen = null; return; }
@@ -1507,6 +1745,41 @@ async function boot() {
   document.addEventListener("contextmenu", (e) => { if (!e.target.closest("input, textarea")) e.preventDefault(); });
 
   if (tauri) {
+    await refreshRemap();
+    if (tauri.event?.listen) {
+      tauri.event
+        .listen("software-remap", (event) => {
+          const prev = state.remap;
+          state.remap = event.payload || state.remap;
+          updateTitleStatus();
+          const changed = prev.enabled !== state.remap.enabled || prev.device !== state.remap.device || prev.panic !== state.remap.panic;
+          if (state.remap.panic && !prev.panic) {
+            for (const p of state.lib.presets) if (p.settings.softwareEnabled) p.settings.softwareEnabled = false;
+            saveLib();
+            toast(t("softwareRemapPanic"), "error");
+            if (state.view.type === "settings" || state.tab === "keys") rerender();
+          } else if (changed && (state.view.type === "settings" || state.view.type === "device")) {
+            rerender();
+          }
+        })
+        .catch((e) => console.warn("software-remap events unavailable", e));
+      tauri.event
+        .listen("software-remap-off", () => {
+          let changed = false;
+          for (const p of state.lib.presets) {
+            if (p.settings.softwareEnabled) {
+              p.settings.softwareEnabled = false;
+              changed = true;
+            }
+          }
+          if (changed) {
+            saveLib();
+            toast(t("softwareRemapStopped"));
+          }
+          if (state.view.type === "settings" || (state.view.type === "device" && state.tab === "keys")) rerender();
+        })
+        .catch(() => {});
+    }
     const win = tauri.window.getCurrentWindow();
     $("#wc-min").onclick = () => win.minimize();
     $("#wc-max").onclick = () => win.toggleMaximize();

@@ -139,7 +139,14 @@ pub static MODELS: &[Model] = &[
     m!(0x0287, "BlackWidow V4", Keyboard, 0x1F, 0, KB, BACKLIGHT),
     m!(0x028D, "BlackWidow V4 Pro", Keyboard, 0x1F, 0, KB, BACKLIGHT),
     m!(0x0293, "BlackWidow V4 X", Keyboard, 0x1F, 0, KB, BACKLIGHT),
-    m!(0x02E3, "Reclusa X Mini 65%", Keyboard, 0x1F, 0, KB | KEYMAP, BACKLIGHT),
+    // No KEYMAP: on hardware (2026-11) this model answers 0x05 "not supported"
+    // to 02/0D and 02/8D on its control interface, for every profile and layer.
+    // Synapse remaps it in software (its device model reports isOBMDevice:false
+    // and mappings live in its mapping engine), so the documented per-key
+    // command family cannot be used here. The desktop app offers an opt-in
+    // software remap on Windows instead; the web build cannot install a
+    // system-wide hook.
+    m!(0x02E3, "Reclusa X Mini 65%", Keyboard, 0x1F, 0, KB, BACKLIGHT),
     // ---------------------------------------------------------- keypads
     m!(0x0207, "Orbweaver Chroma", Keypad, 0xFF, 0, M_STD_LIGHT, BACKLIGHT),
     m!(0x022B, "Tartarus V2", Keypad, 0xFF, 0, KB, BACKLIGHT),

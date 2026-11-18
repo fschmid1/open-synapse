@@ -2,7 +2,9 @@
 
 ## Unreleased
 
-- Add keyboard key remapping for the Reclusa X Mini 65% (`1532:02E3`): map a key on the standard layer to another key, a mouse button or Off, with every write read back. Macros are not supported; mappings this app does not understand are left untouched.
+- Add keyboard key remapping on the standard layer: map a key to another key, a mouse button or Off, with every write read back. The feature is only offered where the firmware answers `02/8D`; the Reclusa X Mini 65% rejects it with "not supported", so device-side remapping stays hidden on that model. Macros are not supported; mappings this app does not understand are left untouched.
+- Add an opt-in **software remap** for the Windows desktop app, for keyboards whose firmware rejects the device-side key-map commands (the Reclusa X Mini 65%). A `WH_KEYBOARD_LL` hook remaps keys while Open Synapse runs, with modifier and key-up/down tracking, a tray indicator, a global-scope warning and an instant-off **Ctrl+Alt+Shift+Esc** panic shortcut. Mappings live in `settings.softwareKeys`, separate from the device-side `settings.keys`; the web build is unchanged because WebHID cannot install a system-wide hook. See `docs/software-remap-checklist.md`.
+- Correct the Reclusa X Mini 65% note: Synapse remaps it in software and does not store the mapping on the keyboard.
 - Make the app, documentation and UI tests English-only; the Russian locale and language switcher were removed.
 - Add a browser build that talks to Razer devices over WebHID. Run `npm run web` and open it in Chrome or Edge; presets and photos live in `localStorage`.
 - Let the web build disconnect a device from its page or the sidebar, or all devices at once, revoking the page's WebHID access until they are connected again.

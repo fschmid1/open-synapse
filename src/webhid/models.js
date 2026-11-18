@@ -102,7 +102,13 @@ export const MODELS = [
   m(0x0287, "BlackWidow V4", "keyboard", 0x1f, 0, KB, BACKLIGHT),
   m(0x028d, "BlackWidow V4 Pro", "keyboard", 0x1f, 0, KB, BACKLIGHT),
   m(0x0293, "BlackWidow V4 X", "keyboard", 0x1f, 0, KB, BACKLIGHT),
-  m(0x02e3, "Reclusa X Mini 65%", "keyboard", 0x1f, 0, KB | KEYMAP, BACKLIGHT),
+  // No KEYMAP: on hardware (2026-11) this model answers 0x05 "not supported"
+  // to 02/0D and 02/8D on its control interface, for every profile and layer.
+  // Synapse remaps it in software (its device model reports isOBMDevice:false
+  // and mappings live in its mapping engine), so the documented per-key
+  // command family cannot be used here. The web build cannot install a
+  // system-wide hook, so it does not offer software remapping.
+  m(0x02e3, "Reclusa X Mini 65%", "keyboard", 0x1f, 0, KB, BACKLIGHT),
   // keypads
   m(0x0207, "Orbweaver Chroma", "keypad", 0xff, 0, M_STD_LIGHT, BACKLIGHT),
   m(0x022b, "Tartarus V2", "keypad", 0xff, 0, KB, BACKLIGHT),
@@ -261,6 +267,9 @@ export function capsOf(model) {
     dynamic_sensitivity: has(DYNSENS),
     remap: has(REMAP),
     keymap: has(KEYMAP),
+    // WebHID cannot install a system-wide keyboard hook, so software remap
+    // is a Windows desktop-app feature only.
+    software: false,
     eq: has(HEADSET_EQ),
     lighting: has(LIGHT),
     brightness: has(BRIGHT),

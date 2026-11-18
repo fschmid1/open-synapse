@@ -1,9 +1,12 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod razer;
+mod remap;
 
 use razer::{DeviceState, DeviceView, Lighting, Manager};
 use std::{fs, path::PathBuf, sync::Mutex};
+#[cfg(windows)]
+use tauri::Emitter;
 use tauri::{AppHandle, Manager as _, State};
 use tauri_plugin_dialog::DialogExt;
 
@@ -81,6 +84,117 @@ fn set_power(state: State<Devices>, key: String, idle: Option<u16>, low_battery:
     with(&state, |m| m.set_power(&key, idle, low_battery))
 }
 
+// ------------------------------------------------------------------ software remapping
+
+#[tauri::command]
+fn software_remap_status() -> remap::RemapStatus {
+    remap::status()
+}
+
+#[tauri::command]
+fn software_remap_enable(mappings: Vec<remap::SoftwareMapping>, device: Option<String>) -> Result<remap::RemapStatus, String> {
+    remap::enable(mappings, device)
+}
+
+#[tauri::command]
+fn software_remap_disable() -> Result<remap::RemapStatus, String> {
+    remap::disable()
+}
+
+#[tauri::command]
+fn software_remap_set(mappings: Vec<remap::SoftwareMapping>) -> Result<remap::RemapStatus, String> {
+    remap::set(mappings)
+}
+
+#[tauri::command]
+fn software_remap_get() -> Vec<remap::SoftwareMapping> {
+    remap::mappings()
+}
+
+// ------------------------------------------------------------------ tray
+
+#[cfg(windows)]
+static APP_HANDLE: std::sync::OnceLock<AppHandle> = std::sync::OnceLock::new();
+#[cfg(windows)]
+static TRAY_STATUS: std::sync::OnceLock<tauri::menu::MenuItem<tauri::Wry>> = std::sync::OnceLock::new();
+
+#[cfg(windows)]
+fn tray_label(status: &remap::RemapStatus) -> String {
+    if status.panic {
+        "Software remap: stopped by panic shortcut".into()
+    } else if status.enabled {
+        format!("Software remap: on ({} keys)", status.mappings)
+    } else {
+        "Software remap: off".into()
+    }
+}
+
+#[cfg(windows)]
+fn update_tray(status: &remap::RemapStatus) {
+    let label = tray_label(status);
+    if let Some(item) = TRAY_STATUS.get() {
+        let _ = item.set_text(&label);
+    }
+    if let Some(app) = APP_HANDLE.get() {
+        if let Some(tray) = app.tray_by_id("remap-tray") {
+            let _ = tray.set_tooltip(Some(&label));
+        }
+    }
+}
+
+#[cfg(windows)]
+fn broadcast(status: remap::RemapStatus) {
+    update_tray(&status);
+    if let Some(app) = APP_HANDLE.get() {
+        let _ = app.emit("software-remap", status);
+    }
+}
+
+#[cfg(not(windows))]
+#[allow(dead_code)]
+fn broadcast(_status: remap::RemapStatus) {}
+
+#[cfg(windows)]
+fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
+    use tauri::menu::{Menu, MenuItem};
+    use tauri::tray::TrayIconBuilder;
+
+    let status_item = MenuItem::with_id(app, "remap-status", "Software remap: off", false, None::<&str>)?;
+    let off_item = MenuItem::with_id(app, "remap-off", "Disable software remapping", true, None::<&str>)?;
+    let show_item = MenuItem::with_id(app, "show", "Show Open Synapse", true, None::<&str>)?;
+    let quit_item = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
+    let menu = Menu::with_items(app, &[&status_item, &off_item, &show_item, &quit_item])?;
+
+    let mut builder = TrayIconBuilder::with_id("remap-tray")
+        .tooltip("Open Synapse — software remap off")
+        .menu(&menu)
+        .show_menu_on_left_click(true)
+        .on_menu_event(|app, event| match event.id.as_ref() {
+            "remap-off" => {
+                // The status callback updates the tray and the window; the
+                // extra event tells the page to clear the per-preset switch.
+                let _ = remap::disable();
+                let _ = app.emit("software-remap-off", ());
+            }
+            "show" => {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.show();
+                    let _ = window.unminimize();
+                    let _ = window.set_focus();
+                }
+            }
+            "quit" => app.exit(0),
+            _ => {}
+        });
+
+    if let Some(icon) = app.default_window_icon() {
+        builder = builder.icon(icon.clone());
+    }
+    builder.build(app)?;
+    let _ = TRAY_STATUS.set(status_item);
+    Ok(())
+}
+
 // ------------------------------------------------------------------ storage
 
 fn store_path(app: &AppHandle) -> Result<PathBuf, String> {
@@ -153,11 +267,37 @@ fn main() {
             set_button,
             set_key,
             set_headset_eq,
+            software_remap_status,
+            software_remap_enable,
+            software_remap_disable,
+            software_remap_set,
+            software_remap_get,
             load_library,
             save_library,
             export_file,
             import_files,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running Open Synapse");
+        .setup(|app| {
+            #[cfg(not(windows))]
+            let _ = app;
+            #[cfg(windows)]
+            {
+                let handle = app.handle().clone();
+                let _ = APP_HANDLE.set(handle);
+                remap::set_status_callback(Box::new(broadcast));
+                // A tray failure must not stop the app; the Keys tab and the
+                // panic shortcut still work.
+                if let Err(error) = setup_tray(app.handle()) {
+                    eprintln!("tray icon unavailable: {error}");
+                }
+            }
+            Ok(())
+        })
+        .build(tauri::generate_context!())
+        .expect("error while building Open Synapse")
+        .run(|_app, event| {
+            if let tauri::RunEvent::Exit = event {
+                remap::shutdown();
+            }
+        });
 }
