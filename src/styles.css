@@ -165,12 +165,20 @@ body:not(.web) .side-add { display: none; }
 
 .dev-item {
   display: grid; grid-template-columns: 34px 1fr auto; align-items: center; gap: 12px;
-  padding: 12px 16px; text-align: left; color: var(--text-2);
+  padding: 12px 16px; text-align: left; color: var(--text-2); cursor: pointer;
   border-bottom: 1px solid var(--line);
   transition: background 0.15s, color 0.15s;
   position: relative;
 }
 .dev-item:hover { background: var(--panel); color: var(--text); }
+.dev-body { min-width: 0; }
+.dev-tail { display: flex; align-items: center; gap: 6px; }
+.dev-forget { width: 22px; height: 22px; display: grid; place-items: center; flex: none; color: var(--text-3); border: 1px solid transparent; border-radius: var(--r-sm); opacity: 0.7; transition: color 0.12s, background 0.12s, border-color 0.12s, opacity 0.12s; }
+.dev-forget svg { width: 10px; height: 10px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; }
+.dev-item:hover .dev-forget { color: var(--text-2); }
+.dev-forget:hover, .dev-forget:focus-visible { color: var(--danger); border-color: var(--danger); opacity: 1; }
+.dev-item.active .dev-forget { color: var(--text-2); opacity: 1; }
+.dev-item.active .dev-forget:hover { color: var(--danger); }
 .dev-item.active { background: var(--panel-2); color: var(--text); }
 .dev-item.active::after { content: ""; position: absolute; right: -1px; top: 0; bottom: 0; width: 2px; background: var(--accent); }
 .dev-num { font: 500 10px/1 var(--mono); color: var(--text-3); }
@@ -204,6 +212,8 @@ body:not(.web) .side-add { display: none; }
 [data-theme="win95"] .dev-item.active .dev-sub, [data-theme="win95"] .dev-item.active .batt-mini { color: #fff; }
 [data-theme="win95"] .dev-item.active::after { display: none; }
 [data-theme="win95"] .dev-item:hover:not(.active) { background: #e8e8e8; }
+[data-theme="win95"] .dev-forget { border: 0; box-shadow: var(--bevel-out); background: #c0c0c0; color: #000; opacity: 1; }
+[data-theme="win95"] .dev-forget:active { box-shadow: var(--bevel-in); }
 [data-theme="win95"] .nav-btn { box-shadow: var(--bevel-out); margin-top: 4px; height: 34px; font-family: var(--font); letter-spacing: 0; text-transform: none; font-size: 12px; color: #000; }
 [data-theme="win95"] .nav-btn.active { box-shadow: var(--bevel-in); background: #c0c0c0; color: #000; font-weight: 700; }
 [data-theme="win95"] .dot { background: #008000; }

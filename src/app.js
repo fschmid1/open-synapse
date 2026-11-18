@@ -456,12 +456,15 @@ function renderSidebar() {
         const b = state.hw[d.key]?.battery;
         const active = state.view.type === "device" && state.view.key === d.key;
         const sub = d.demo ? t("demo") : d.asleep ? t("sleeping") : d.online ? (d.wireless ? t("wireless") : t("wired")) : t("asleep");
-        return `<button class="dev-item ${active ? "active" : ""}" data-key="${esc(d.key)}"${d.error ? ` title="${esc(d.error)}"` : ""}>
+        return `<div class="dev-item ${active ? "active" : ""}" data-key="${esc(d.key)}" role="button" tabindex="0"${d.error ? ` title="${esc(d.error)}"` : ""}>
           <span class="dev-icon">${devicePhoto(d) ? `<img src="${devicePhoto(d)}" alt="">` : icons[d.kind] || icons.other}</span>
-          <span style="min-width:0"><div class="dev-name">${esc(d.name)}</div>
+          <span class="dev-body"><div class="dev-name">${esc(d.name)}</div>
           <div class="dev-sub"><span class="dot ${d.online ? "" : "off"}"></span>${esc(sub)}</div></span>
-          ${d.caps.battery && b != null ? `<span class="batt-mini">${b}%</span>` : ""}
-        </button>`;
+          <span class="dev-tail">
+            ${d.caps.battery && b != null ? `<span class="batt-mini">${b}%</span>` : ""}
+            ${webMode() && !d.demo ? `<button class="dev-forget" data-act="disconnect" data-key="${esc(d.key)}" title="${esc(t("disconnect"))}" aria-label="${esc(t("disconnect") + ": " + d.name)}">${I.x}</button>` : ""}
+          </span>
+        </div>`;
       })
       .join("");
   }
@@ -968,7 +971,7 @@ function addImported(texts) {
 async function onClick(e) {
   if (e.target.closest("[data-pick]")) return;
   const item = e.target.closest(".dev-item[data-key]");
-  if (item) {
+  if (item && !e.target.closest("[data-act]")) {
     state.view = { type: "device", key: item.dataset.key };
     state.zone = null;
     state.listen = null;
@@ -1010,22 +1013,23 @@ async function onClick(e) {
       return;
     }
     case "disconnect": {
-      if (!webMode() || !dev || dev.demo) return;
+      const target = (el.dataset.key && state.devices.find((d) => d.key === el.dataset.key)) || dev;
+      if (!webMode() || !target || target.demo) return;
       const ok = await modal({
         title: t("disconnect"),
-        text: t("disconnectConfirm", { device: dev.name }),
+        text: t("disconnectConfirm", { device: target.name }),
         actions: [{ label: t("cancel"), kind: "ghost" }, { label: t("disconnect"), kind: "primary", value: () => true }],
       });
       if (!ok) return;
       try {
-        await call("disconnect_device", { key: dev.key });
-        state.seen.delete(dev.key);
-        toast(t("disconnected", { device: dev.name }));
+        await call("disconnect_device", { key: target.key });
+        state.seen.delete(target.key);
+        toast(t("disconnected", { device: target.name }));
       } catch (e) {
         return toast(errText(e), "error");
       }
       await poll();
-      if (state.view.type === "device" && !state.devices.some((d) => d.key === dev.key)) {
+      if (state.view.type === "device" && !state.devices.some((d) => d.key === target.key)) {
         state.view.key = state.devices[0]?.key ?? null;
         render(true);
       }
@@ -1320,6 +1324,17 @@ async function boot() {
   }
 
   document.addEventListener("click", onClick);
+  document.addEventListener("keydown", (e) => {
+    if (e.defaultPrevented) return;
+    const item = e.target.closest?.(".dev-item[data-key]");
+    if (!item || e.target.closest("[data-act]")) return;
+    if (e.key !== "Enter" && e.key !== " ") return;
+    e.preventDefault();
+    state.view = { type: "device", key: item.dataset.key };
+    state.zone = null;
+    state.listen = null;
+    render(true);
+  });
   document.addEventListener("keydown", (e) => {
     if (state.listen == null) return;
     const dev = currentDevice();
