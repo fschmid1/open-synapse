@@ -74,6 +74,7 @@ Web version: [fschmid1.github.io/open-synapse](https://fschmid1.github.io/open-s
 
 ```bash
 npm run web        # http://127.0.0.1:4173
+npm run build:web  # static build in dist/, published to GitHub Pages
 npm run test:webhid
 ```
 

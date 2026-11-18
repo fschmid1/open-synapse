@@ -11,6 +11,7 @@
     "test:ui": "node scripts/test-ui.mjs",
     "icons": "node scripts/render-icon.mjs && tauri icon assets/icon-1024.png",
     "web": "node scripts/serve.mjs",
+    "build:web": "node scripts/build-web.mjs",
     "test:webhid": "node scripts/test-webhid.mjs"
   },
   "devDependencies": {
