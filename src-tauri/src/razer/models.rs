@@ -138,6 +138,7 @@ pub static MODELS: &[Model] = &[
     m!(0x0287, "BlackWidow V4", Keyboard, 0x1F, 0, KB, BACKLIGHT),
     m!(0x028D, "BlackWidow V4 Pro", Keyboard, 0x1F, 0, KB, BACKLIGHT),
     m!(0x0293, "BlackWidow V4 X", Keyboard, 0x1F, 0, KB, BACKLIGHT),
+    m!(0x02E3, "Reclusa X Mini 65%", Keyboard, 0x1F, 0, KB, BACKLIGHT),
     // ---------------------------------------------------------- keypads
     m!(0x0207, "Orbweaver Chroma", Keypad, 0xFF, 0, M_STD_LIGHT, BACKLIGHT),
     m!(0x022B, "Tartarus V2", Keypad, 0xFF, 0, KB, BACKLIGHT),
