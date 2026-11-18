@@ -59,7 +59,8 @@ available. This checklist validates the Windows software fallback.
 - [ ] Repeat the panic test with Esc itself remapped, and with Ctrl/Alt/Shift remapped. The panic
       combination still works because it is checked before the mapping lookup.
 - [ ] Use the tray item **Disable software remapping**. It stops the hook.
-- [ ] Close the app. The hook is removed and the keyboard behaves normally.
+- [ ] Close the window. It disappears to the tray, the app keeps running and remapping keeps
+      working. **Quit** from the tray removes the hook and the keyboard behaves normally.
 - [ ] Disconnect the keyboard. The hook stops instead of leaving stale mappings active.
 - [ ] Reconnect the keyboard. The mapping is restored when the preset has software remap enabled.
 - [ ] Sleep/resume. Remapping either keeps working or can be re-enabled without restarting.

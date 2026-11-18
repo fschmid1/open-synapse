@@ -114,6 +114,8 @@ fn software_remap_get() -> Vec<remap::SoftwareMapping> {
 // ------------------------------------------------------------------ tray
 
 #[cfg(windows)]
+const TRAY_ID: &str = "remap-tray";
+#[cfg(windows)]
 static APP_HANDLE: std::sync::OnceLock<AppHandle> = std::sync::OnceLock::new();
 #[cfg(windows)]
 static TRAY_STATUS: std::sync::OnceLock<tauri::menu::MenuItem<tauri::Wry>> = std::sync::OnceLock::new();
@@ -136,7 +138,7 @@ fn update_tray(status: &remap::RemapStatus) {
         let _ = item.set_text(&label);
     }
     if let Some(app) = APP_HANDLE.get() {
-        if let Some(tray) = app.tray_by_id("remap-tray") {
+        if let Some(tray) = app.tray_by_id(TRAY_ID) {
             let _ = tray.set_tooltip(Some(&label));
         }
     }
@@ -165,7 +167,7 @@ fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
     let quit_item = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&status_item, &off_item, &show_item, &quit_item])?;
 
-    let mut builder = TrayIconBuilder::with_id("remap-tray")
+    let mut builder = TrayIconBuilder::with_id(TRAY_ID)
         .tooltip("Open Synapse — software remap off")
         .menu(&menu)
         .show_menu_on_left_click(true)
@@ -193,6 +195,22 @@ fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
     builder.build(app)?;
     let _ = TRAY_STATUS.set(status_item);
     Ok(())
+}
+
+// ------------------------------------------------------------------ window
+
+/// Closing the main window on Windows parks it in the tray instead of
+/// quitting, so software remapping and the panic shortcut keep working with no
+/// window on screen. Without a tray icon there would be no way back to the
+/// app, so when the tray is missing the close still goes through.
+#[cfg(windows)]
+fn hide_instead_of_close<R: tauri::Runtime>(window: &tauri::Window<R>, event: &tauri::WindowEvent) {
+    let tauri::WindowEvent::CloseRequested { api, .. } = event else { return };
+    if window.app_handle().tray_by_id(TRAY_ID).is_none() {
+        return;
+    }
+    api.prevent_close();
+    let _ = window.hide();
 }
 
 // ------------------------------------------------------------------ storage
@@ -253,6 +271,12 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(Devices(Mutex::new(Manager::new())))
+        .on_window_event(|window, event| {
+            #[cfg(windows)]
+            hide_instead_of_close(window, event);
+            #[cfg(not(windows))]
+            let _ = (window, event);
+        })
         .invoke_handler(tauri::generate_handler![
             list_devices,
             device_state,

@@ -158,7 +158,7 @@ The Windows desktop app can remap a key even when the keyboard does not implemen
 
 How it works: a dedicated thread installs `SetWindowsHookExW(WH_KEYBOARD_LL)` and runs a `GetMessage` loop. The hook swallows the original key and injects the replacement with `SendInput`. Injected events carry a unique `dwExtraInfo` marker and are ignored, so a remap can never loop. Key-down/key-up pairs are tracked, target modifiers are reference counted, and a modifier that is already physically held is not pressed twice.
 
-- **Works only while Open Synapse runs.** The mapping is not written to the keyboard. Closing the app removes the hook, and the keyboard returns to its factory behaviour.
+- **Works only while Open Synapse runs.** The mapping is not written to the keyboard. Closing the window keeps the app in the tray and remapping keeps working; **Quit** in the tray menu removes the hook, and the keyboard returns to its factory behaviour.
 - **Global scope (v1).** The low-level hook sees every keyboard, so the mapping applies to all keyboards while enabled, not only to the selected device.
 - **Not available in the BIOS, on another computer or OS, on the secure desktop (UAC, Ctrl+Alt+Del), or in elevated apps unless Open Synapse is elevated.** Windows blocks injected input from a lower integrity level to a higher one (UIPI). Ctrl+Alt+Del is a Secure Attention Sequence and cannot be intercepted by any user-mode hook.
 - **Games and anti-cheat.** Some games read Raw Input directly or block injected input; some anti-virus/EDR products flag `WH_KEYBOARD_LL` hooks. If the hook cannot be installed, the enable call returns an error and the UI reports it instead of failing silently.
