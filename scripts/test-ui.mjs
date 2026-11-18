@@ -32,19 +32,15 @@ try {
   }
   for (const width of [1000,1180,1280,1600]) {
     await page.setViewportSize({width,height:660});
-    for (const lang of ['ru','en']) {
+    for (const theme of ['mono','neon','orange','violet','terminal','paper','win95']) {
       await page.locator('[data-view="settings"]').click();
-      await page.locator(`[data-act="lang"][data-v="${lang}"]`).click();
-      for (const theme of ['mono','neon','orange','violet','terminal','paper','win95']) {
-        await page.locator('[data-view="settings"]').click();
-        await page.locator(`[data-act="theme"][data-v="${theme}"]`).click();
-        await fit(`${width}/${lang}/${theme}/settings`);
-        await page.locator('[data-view="library"]').click(); await fit('library');
-        for (const key of ['demo:viper','demo:basilisk','demo:bw','demo:firefly']) {
-          await page.locator(`.dev-item[data-key="${key}"]`).click(); await fit(key);
-          for (const tab of await page.locator('[data-tab]').evaluateAll(es => es.map(e => e.dataset.tab))) {
-            await page.locator(`[data-tab="${tab}"]`).click(); await fit(`${key}/${tab}`);
-          }
+      await page.locator(`[data-act="theme"][data-v="${theme}"]`).click();
+      await fit(`${width}/${theme}/settings`);
+      await page.locator('[data-view="library"]').click(); await fit('library');
+      for (const key of ['demo:viper','demo:basilisk','demo:bw','demo:firefly']) {
+        await page.locator(`.dev-item[data-key="${key}"]`).click(); await fit(key);
+        for (const tab of await page.locator('[data-tab]').evaluateAll(es => es.map(e => e.dataset.tab))) {
+          await page.locator(`[data-tab="${tab}"]`).click(); await fit(`${key}/${tab}`);
         }
       }
     }
@@ -54,7 +50,7 @@ try {
   await page.locator('[data-act="theme"][data-v="mono"]').click();
   await page.locator('.dev-item').first().click();
   await page.locator('[data-tab="performance"]').click();
-  const name = 'Основной профиль — ' + 'длинное имя '.repeat(3);
+  const name = 'Main profile — ' + 'a very long name '.repeat(3);
   await page.locator('[data-act="save-as"]').click();
   await page.setViewportSize({width:1000,height:660});
   const bounds = await page.locator('.modal').boundingBox();

@@ -7,12 +7,8 @@
 <p align="center">
   A free, open-source configurator for Razer peripherals.<br>
   Local settings. No account, cloud or telemetry.<br>
-  <a href="#english">English</a> · <a href="#зачем">Русский</a> · <a href="https://github.com/1apok/open-synapse/releases/latest">Download</a> · <a href="https://github.com/1apok/open-synapse/issues">Report a device or bug</a>
+  <a href="https://github.com/1apok/open-synapse/releases/latest">Download</a> · <a href="https://github.com/1apok/open-synapse/issues">Report a device or bug</a>
 </p>
-
-![Open Synapse: DPI stages, polling rate and device preview in the English interface](docs/images/dpi-demo.png)
-
-*Screenshot from demo mode. Device support varies; see the hardware notes below.*
 
 **Try it:** download the latest release for **Windows x64**, **Linux x64** or **macOS Apple Silicon**. Demo mode lets you explore the UI without a device. Close official Razer Synapse before configuring hardware.
 
@@ -20,104 +16,104 @@
 
 ---
 
-## Зачем
+## Why
 
-Официальный софт требует вход в аккаунт, тянет фоновые сервисы и весит сотни мегабайт.
-Open Synapse — это одно маленькое приложение (~10 МБ) на Rust, которое сразу открывается и просто настраивает устройство.
+The official software requires an account login, runs background services and weighs hundreds of megabytes.
+Open Synapse is one small (~10 MB) Rust app that opens instantly and simply configures your device.
 
-## Возможности
+## Features
 
-- **Производительность** — до 5 уровней DPI, раздельные X/Y, частота опроса 125–1000 Гц и HyperPolling до 8000 Гц.
-- **Подсветка** — статичный цвет, дыхание (1 или 2 цвета), спектр, волна, реакция, звёзды; яркость, скорость, направление, отдельные зоны (логотип, колесо и т.д.) с живым превью.
-- **Питание** — заряд и статус зарядки, время до сна, порог экономии заряда, режим индикатора донгла.
-- **Кнопки** — колесо и боковые кнопки на любую функцию мыши или клавишу (с Ctrl/Shift/Alt/Win). Левая и правая не переназначаются, чтобы пресет не оставил без клика.
-- **Калибровка** — расстояние отрыва (низкое/среднее/высокое), динамическая чувствительность с кривыми «классическая», «естественная», «прыжок» и своей.
-- **Спящая мышь** — если беспроводная мышь уснула, приложение это видит и не принимает донгл за мышь.
-- **Пресеты, которые переносятся** — пресет не привязан к модели: примените настройки одной мыши к другой, экспортируйте в файл `.osp` или поделитесь кодом `OSP1.…` в чате. Неподдерживаемые параметры просто пропускаются, DPI подрезается под максимум сенсора.
-- **Автоприменение** — пресет устройства восстанавливается при каждом подключении.
-- **Горячее подключение** — устройства появляются и исчезают сами.
-- **7 тем**: Графит, Неон, Оранж, Ультрафиолет, Терминал, Бумага и честная **Windows 95** с объёмными кнопками.
-- **Своё фото устройства** — перетащите картинку на превью (например, с сайта производителя); хранится только локально.
-- **Настройки из памяти устройства** — DPI-уровни, частота опроса и время сна, сохранённые в мыши другой программой, считываются при первом подключении.
-- **Русский и английский интерфейс**, шрифты Unbounded, Inter, JetBrains Mono и Playfair Display.
-- **Демо-режим** — осмотреться без железа.
-- **Веб-версия** — та же страница открывается в Chrome или Edge и управляет устройствами через WebHID.
+- **Performance** — up to 5 DPI stages, separate X/Y, polling rate 125–1000 Hz and HyperPolling up to 8000 Hz.
+- **Lighting** — static color, breathing (1 or 2 colors), spectrum, wave, reactive, starlight; brightness, speed, direction, individual zones (logo, wheel, etc.) with a live preview.
+- **Power** — charge and charging status, time to sleep, low-battery threshold, dongle indicator mode.
+- **Buttons** — wheel and side buttons to any mouse function or key (with Ctrl/Shift/Alt/Win). Left and right are not remappable so a preset never leaves you without a click.
+- **Calibration** — lift-off distance (low/medium/high), dynamic sensitivity with "classic", "natural", "jump" and custom curves.
+- **Sleeping mouse** — if a wireless mouse falls asleep, the app notices and does not mistake the dongle for the mouse.
+- **Portable presets** — a preset is not tied to a model: apply one mouse's settings to another, export to an `.osp` file or share an `OSP1.…` code in chat. Unsupported parameters are skipped, DPI is clamped to the sensor maximum.
+- **Auto-apply** — the device's preset is restored on every connection.
+- **Hot-plug** — devices appear and disappear on their own.
+- **7 themes**: Graphite, Neon, Orange, Ultraviolet, Terminal, Paper and a faithful **Windows 95** with beveled buttons.
+- **Custom device photo** — drag an image onto the preview (for example from the manufacturer's site); it is stored locally only.
+- **Settings from device memory** — DPI stages, polling rate and sleep time saved to the mouse by another program are read on first connection.
+- **English interface**, fonts Unbounded, Inter, JetBrains Mono and Playfair Display.
+- **Demo mode** — look around without hardware.
+- **Web version** — the same page opens in Chrome or Edge and controls devices through WebHID.
 
-## Поддерживаемые устройства
+## Supported devices
 
-В базе 70+ моделей: мыши (DeathAdder, Viper, Basilisk, Naga, Cobra, Orochi), клавиатуры (BlackWidow, Huntsman, Ornata, Cynosa), кейпады Tartarus/Orbweaver, коврики Firefly/Goliathus/Strider, док-станции и подставки. Полный список — в [`src-tauri/src/razer/models.rs`](src-tauri/src/razer/models.rs).
+The database has 70+ models: mice (DeathAdder, Viper, Basilisk, Naga, Cobra, Orochi), keyboards (BlackWidow, Huntsman, Ornata, Cynosa), Tartarus/Orbweaver keypads, Firefly/Goliathus/Strider mousepads, docks and stands. The full list is in [`src-tauri/src/razer/models.rs`](src-tauri/src/razer/models.rs).
 
-Устройство, которого нет в базе, всё равно определяется: возможности угадываются по его Product ID, а в интерфейсе оно помечено «Не проверено».
+A device that is not in the database is still detected: capabilities are guessed from its Product ID, and the interface marks it "Unverified".
 
-> Для BlackShark V2 Pro (PID `0555`) доступны пресеты эквалайзера «Игра», «Кино» и «Музыка». Остальные гарнитуры пока не поддерживаются; это не полная замена их настроек в Synapse.
-> Перед запуском закройте Razer Synapse, если он установлен: два конфигуратора мешают друг другу.
+> EQ presets "Game", "Movie" and "Music" are available for the BlackShark V2 Pro (PID `0555`). Other headsets are not supported yet; this is not a full replacement for their settings in Synapse.
+> Before launching, close Razer Synapse if it is installed: two configurators interfere with each other.
 
-## Установка
+## Installation
 
-Скачайте установщик со страницы [Releases](../../releases). Сборки для Windows, Linux и macOS делаются автоматически при публикации тега `v*`.
+Download the installer from the [Releases](../../releases) page. Windows, Linux and macOS builds are produced automatically when a `v*` tag is published.
 
-На Linux для доступа к устройствам без root добавьте udev-правило:
+On Linux, to access devices without root, add a udev rule:
 
 ```bash
 echo 'SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1532", MODE="0666"' | sudo tee /etc/udev/rules.d/99-open-synapse.rules
 ```
 
-## Сборка из исходников
+## Building from source
 
-Нужны [Rust](https://rustup.rs), [Node.js](https://nodejs.org) 20+ и, на Windows, Visual Studio Build Tools с компонентом C++.
+You need [Rust](https://rustup.rs), [Node.js](https://nodejs.org) 20+ and, on Windows, Visual Studio Build Tools with the C++ component.
 
 ```bash
 npm install
-npm run dev      # запуск в режиме разработки
-npm run build    # установщик в src-tauri/target/release/bundle
+npm run dev      # start in development mode
+npm run build    # installer in src-tauri/target/release/bundle
 ```
 
-Тесты протокола: `cargo test --manifest-path src-tauri/Cargo.toml`.
+Protocol tests: `cargo test --manifest-path src-tauri/Cargo.toml`.
 
-Веб-версия: [fschmid1.github.io/open-synapse](https://fschmid1.github.io/open-synapse/) (нужен Chrome или Edge с WebHID).
+Web version: [fschmid1.github.io/open-synapse](https://fschmid1.github.io/open-synapse/) (requires Chrome or Edge with WebHID).
 
 ```bash
 npm run web        # http://127.0.0.1:4173
 npm run test:webhid
 ```
 
-Та же страница публикуется на GitHub Pages из ветки `main`. Управление железом идёт через WebHID, поэтому нужен Chromium-браузер и HTTPS либо `localhost`; в Firefox и Safari доступен демо-режим. Пресеты в веб-версии хранятся в `localStorage`. В Linux браузеру нужен доступ к HID-устройству: если подключение падает, добавьте udev-правило для `1532` (или установите `chrome-udev`).
+The same page is published to GitHub Pages from the `main` branch. Hardware control goes through WebHID, so a Chromium browser and HTTPS or `localhost` are required; demo mode is available in Firefox and Safari. Presets in the web version are stored in `localStorage`. On Linux the browser needs access to the HID device: if connecting fails, add the udev rule for `1532` (or install `chrome-udev`).
 
-Проверка интерфейса (два языка, семь тем, четыре размера окна, пресеты и прокрутка):
+Interface check (seven themes, four window sizes, presets and scrolling):
 
 ```bash
 npx playwright install chromium
 npm run test:ui
 ```
 
-Изменения версий: [CHANGELOG.md](CHANGELOG.md).
+Version changes: [CHANGELOG.md](CHANGELOG.md).
 
-## Как это устроено
+## How it works
 
 ```
-src/                 интерфейс: HTML + CSS + JS без сборщика
-  app.js             состояние, пресеты, горячее подключение
-  art.js             SVG-иллюстрации устройств с зонами подсветки
-  i18n.js            переводы
-  webhid/            браузерный бэкенд: протокол, база устройств, WebHID
+src/                 interface: HTML + CSS + JS with no bundler
+  app.js             state, presets, hot-plug
+  art.js             SVG device illustrations with lighting zones
+  i18n.js            translations
+  webhid/            browser backend: protocol, device database, WebHID
 src-tauri/src/
-  main.rs            команды Tauri, хранилище, импорт/экспорт
-  razer/protocol.rs  90-байтовые HID feature-репорты Razer
-  razer/models.rs    база устройств
-  razer/mod.rs       поиск интерфейса управления и команды
+  main.rs            Tauri commands, storage, import/export
+  razer/protocol.rs  90-byte Razer HID feature reports
+  razer/models.rs    device database
+  razer/mod.rs       control-interface discovery and commands
 ```
 
-Протокол — это 90-байтовые feature-репорты HID (класс команды, ID, аргументы, XOR-контрольная сумма), задокументированные проектом [OpenRazer](https://github.com/openrazer/openrazer). Для каждого устройства приложение перебирает его HID-интерфейсы и transaction ID, пока устройство не ответит, и запоминает рабочую пару.
+The protocol uses 90-byte HID feature reports (command class, ID, arguments, XOR checksum), documented by the [OpenRazer](https://github.com/openrazer/openrazer) project. For each device, the app iterates over its HID interfaces and transaction IDs until the device responds, then remembers the working pair.
 
-Пресеты хранятся в `library.json` в папке настроек приложения (`%APPDATA%\dev.opensynapse.app` на Windows), а в веб-версии — в `localStorage` браузера.
+Presets are stored in `library.json` in the app's settings folder (`%APPDATA%\dev.opensynapse.app` on Windows), and in the web version in the browser's `localStorage`.
 
-### Формат пресета
+### Preset format
 
 ```json
 {
   "format": "open-synapse/preset",
   "version": 1,
-  "name": "Турнир",
+  "name": "Tournament",
   "kind": "mouse",
   "settings": {
     "dpi": { "stages": [{ "x": 800, "y": 800 }, { "x": 1600, "y": 1600 }], "active": 0, "split": false },
@@ -128,40 +124,20 @@ src-tauri/src/
 }
 ```
 
-### Проверено на железе
+### Verified on hardware
 
-Всё в разделах «Кнопки», «Калибровка» и «Индикатор донгла» снято с USB-трафика официального приложения (USBPcap) на **Viper V3 Pro** и перепроверено на самой мыши: значение записывается, читается обратно и возвращается. Для остальных моделей эти функции пока выключены. Чтобы добавить модель, сделайте то же: запишите трафик и приложите расшифровку к pull request.
+Everything in the "Buttons", "Calibration" and "Dongle LED" sections was captured from the official app's USB traffic (USBPcap) on the **Viper V3 Pro** and re-checked on the mouse itself: the value is written, read back and returned. For other models these features are currently disabled. To add a model, do the same: record the traffic and attach the decode to a pull request.
 
-Тесты на реальном устройстве помечены `#[ignore]` и запускаются явно:
+Tests on real hardware are marked `#[ignore]` and run explicitly:
 
 ```bash
 cargo test --manifest-path src-tauri/Cargo.toml probe_hardware -- --ignored --nocapture
 ```
 
-## Участие
+## Contributing
 
-Нашли устройство с неверными данными или хотите добавить новое — откройте pull request с правкой в `models.rs` (PID, transaction ID, зоны). Особенно полезны отчёты «работает / не работает» с реальным железом.
+Found a device with wrong data or want to add a new one — open a pull request with a change to `models.rs` (PID, transaction ID, zones). "Works / doesn't work" reports with real hardware are especially useful.
 
-## Правовое
+## Legal
 
-Open Synapse — независимый проект, не связанный с Razer Inc. Razer, Synapse и названия устройств — товарные знаки их владельцев и используются только для указания совместимости. Лицензия — [MIT](LICENSE).
-
----
-
-<a id="english"></a>
-
-## English
-
-Open Synapse is a tiny (~10 MB) Rust + Tauri app that configures Razer devices with no account, cloud or telemetry.
-
-- DPI stages (up to 5, split X/Y), polling rate up to 8000 Hz
-- Lighting effects per zone with a live preview, brightness, speed, direction
-- Battery, sleep timer and low-battery threshold for wireless devices
-- **Portable presets**: apply any preset to any device, export `.osp` files or share `OSP1.…` codes
-- Auto-apply on connect, hot-plug, Russian and English UI
-- Browser build with WebHID hardware control (Chrome/Edge): `npm run web`
-
-The web build lives at [fschmid1.github.io/open-synapse](https://fschmid1.github.io/open-synapse/) and uses WebHID, so hardware control needs Chrome or Edge and HTTPS or `localhost`; other browsers can still use demo mode. The GitHub Pages workflow publishes the same `src/` folder from `main`.
-
-Build: `npm install && npm run build`. Devices are listed in `src-tauri/src/razer/models.rs` — PRs welcome.
-Not affiliated with Razer Inc. MIT licensed.
+Open Synapse is an independent project, not affiliated with Razer Inc. Razer, Synapse and device names are trademarks of their respective owners and are used only to indicate compatibility. Licensed under [MIT](LICENSE).

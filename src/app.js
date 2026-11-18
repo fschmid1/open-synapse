@@ -1,4 +1,4 @@
-import { t, setLang } from "./i18n.js";
+import { t, applyTranslations } from "./i18n.js";
 import { deviceArt, icons } from "./art.js";
 import { PRODUCT_IMAGE } from "./devices/index.js";
 
@@ -142,29 +142,24 @@ const confirmBox = (title, text) =>
 // ------------------------------------------------------------------ library
 
 function defaultLib() {
-  return { version: 1, presets: [], bindings: {}, photos: {}, settings: { lang: "en", theme: "mono", autoApply: true, demo: false } };
+  return { version: 1, presets: [], bindings: {}, photos: {}, settings: { theme: "mono", autoApply: true, demo: false } };
 }
 
 async function loadLib() {
   let lib = defaultLib();
-  let migrated = false;
   try {
     const raw = tauri ? await invoke("load_library") : localStorage.getItem("osyn-lib");
     if (raw) {
       const parsed = JSON.parse(raw);
       lib = { ...lib, ...parsed, settings: { ...lib.settings, ...parsed.settings } };
+      delete lib.settings.lang;
       lib.photos = lib.photos || {};
-      lib.presets = (lib.presets || []).map((p) => {
-        const name = typeof p.name === "string" ? p.name.replace(/ — основной$/, " — main") : p.name;
-        if (name !== p.name) migrated = true;
-        return { ...p, name, settings: normalize(p.settings) };
-      });
+      lib.presets = (lib.presets || []).map((p) => ({ ...p, settings: normalize(p.settings) }));
     }
   } catch (e) {
     console.warn("library load failed", e);
   }
   state.lib = lib;
-  if (migrated) saveLib();
 }
 
 function saveLib() {
@@ -794,7 +789,7 @@ function presetCard(p, i) {
   const fx = s.lighting.zones.all;
   const bound = state.devices.filter((d) => state.lib.bindings[d.key] === p.id);
   const swatch = ["spectrum", "wave"].includes(fx.effect) ? "spectrum" : "";
-  const date = new Date(p.updated).toLocaleDateString(state.lib.settings.lang === "en" ? "en-GB" : "ru-RU");
+  const date = new Date(p.updated).toLocaleDateString("en-GB");
   return `<article class="preset">
     <div class="preset-num"><span>${pad2(i + 1)} / ${esc(t("kind_" + p.kind))}</span><span>${date}</span></div>
     <div class="preset-top">
@@ -873,8 +868,6 @@ function settingsView() {
       <span class="theme-name">${esc(t("theme_" + k))}</span></button>`).join("")}</div>
     <div class="grid" style="border-top:1px solid var(--line)">
       <div class="card">${head(2, t("general"))}
-        <div class="setting"><div class="t">${esc(t("language"))}</div>
-          <div class="seg small" style="width:240px">${[["en", "English"], ["ru", "Русский"]].map(([v, l]) => `<button class="${st.lang === v ? "on" : ""}" data-act="lang" data-v="${v}">${l}</button>`).join("")}</div></div>
         <div class="setting"><div><div class="t">${esc(t("autoApply"))}</div><div class="d">${esc(t("autoApplyHint"))}</div></div>
           <label class="switch"><input type="checkbox" data-act="autoapply" ${st.autoApply ? "checked" : ""}><span></span></label></div>
         <div class="setting"><div><div class="t">${esc(t("demoMode"))}</div><div class="d">${esc(t("demoModeHint"))}</div></div>
@@ -1128,11 +1121,6 @@ async function onClick(e) {
       if (text) addImported([text]);
       return;
     }
-    case "lang":
-      state.lib.settings.lang = el.dataset.v;
-      setLang(el.dataset.v);
-      saveLib();
-      return render();
     case "theme":
       state.lib.settings.theme = el.dataset.v;
       applyTheme();
@@ -1267,7 +1255,7 @@ async function onChange(e) {
 
 async function boot() {
   await loadLib();
-  setLang(state.lib.settings.lang);
+  applyTranslations();
   applyTheme();
 
   if (!tauri) {

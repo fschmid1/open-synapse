@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Make the app, documentation and UI tests English-only; the Russian locale and language switcher were removed.
 - Add a browser build that talks to Razer devices over WebHID. Run `npm run web` and open it in Chrome or Edge; presets and photos live in `localStorage`.
 - Add `npm run test:webhid` for the browser protocol port.
 - Publish the web build to GitHub Pages from `main`.
